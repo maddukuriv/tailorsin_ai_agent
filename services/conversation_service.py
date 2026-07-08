@@ -134,7 +134,7 @@ def build_intent_response(intent_name: str, client_type: str) -> list[OutgoingMe
 
 
 RETURNING_CLIENT_TYPES = {"active_client", "client"}
-SESSION_TIMEOUT_SECONDS = 120
+SESSION_TIMEOUT_SECONDS = 600
 
 
 def normalize_mobile(value: str) -> str:
@@ -527,7 +527,9 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             )
             save_client_profile(message.user_id, mobile, client_type, customer_salutation)
             return [
-                OutgoingMessage(text=registration_result.message),
+                OutgoingMessage(
+                    text=f"{registration_result.message}\nRegistration complete. Showing your client menu now.",
+                ),
                 build_main_menu_response(message.user_id, client_type, customer_salutation),
             ]
 
@@ -603,9 +605,16 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         schedule_result = schedule_fresh_pickup(mobile_for_pickup, pickup_date, pickup_time)
         clear_pickup_flow(existing_session)
         if schedule_result.success:
+            # Fresh pickup creates an active order, so switch menu context immediately.
+            save_client_profile(
+                message.user_id,
+                mobile_for_pickup,
+                "active_client",
+                existing_customer_salutation,
+            )
             return [
                 OutgoingMessage(text=schedule_result.message),
-                build_main_menu_response(message.user_id, existing_client_type or "client", existing_customer_salutation),
+                build_main_menu_response(message.user_id, "active_client", existing_customer_salutation),
             ]
 
         if schedule_result.conflict_open_order:
@@ -753,9 +762,10 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             notes = ""
 
         fabric_delivery_result = create_fabric_delivery_request(mobile_for_fabric_delivery, notes=notes)
+        handover_result = request_human_handover(mobile_for_fabric_delivery)
         return [
             OutgoingMessage(
-                text=fabric_delivery_result.message,
+                text=f"{fabric_delivery_result.message}\n{handover_result.message}",
                 reply_markup=build_menu_reply_markup(existing_client_type or "client"),
             )
         ]
@@ -930,9 +940,10 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             request_type=request_type,
             details=details,
         )
+        handover_result = request_human_handover(mobile_for_change)
         return [
             OutgoingMessage(
-                text=create_result.message,
+                text=f"{create_result.message}\n{handover_result.message}",
                 reply_markup=build_menu_reply_markup(existing_client_type or "active_client"),
             )
         ]
@@ -1017,6 +1028,18 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             return [
                 OutgoingMessage(text="Please choose one of the listed menu options."),
                 build_main_menu_response(message.user_id, client_type, customer_salutation),
+            ]
+
+        if client_type == "new_user" and selected_intent in {"visit", "handover"}:
+            mobile_for_registration = derive_mobile_from_message(message, mobile)
+            if mobile_for_registration:
+                save_client_profile(message.user_id, mobile_for_registration, client_type, customer_salutation)
+
+            existing_session.awaiting_registration_name = True
+            return [
+                OutgoingMessage(
+                    text="Please complete registration first. Enter your full name to continue.",
+                )
             ]
 
         if selected_intent == "register":
