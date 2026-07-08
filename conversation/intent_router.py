@@ -1,11 +1,22 @@
 from conversation.menu import FOOTER_MENU_OPTIONS, get_menu_options
 
 
+VISIT_HISTORY_INPUTS = {
+    "visit history",
+    "appointment history",
+    "visit status",
+    "appointment status",
+    "my appointments",
+}
+
+
 def get_intent(client_type, option):
 
     menu = get_menu_options(client_type)
 
     normalized_option = option.strip()
+    if normalized_option.casefold() in VISIT_HISTORY_INPUTS:
+        return "visit_history"
 
     if normalized_option in menu:
         return menu[normalized_option]["intent"]
