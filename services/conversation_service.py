@@ -25,6 +25,7 @@ from crm.client_type import lookup_customer_profile
 from crm.cancel_order import cancel_current_order
 from crm.fabric_delivery import create_fabric_delivery_request
 from crm.fabric_alert import raise_fabric_alert
+from crm.bulk_order import create_bulk_order_enquiry
 from crm.human_handover import request_human_handover
 from crm.order_change_request import create_order_change_request, list_order_change_requests
 from crm.order_status import fetch_current_order_status
@@ -1536,6 +1537,34 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             return [
                 OutgoingMessage(
                     text=f"{fabric_result.message}\n{handover_result.message}",
+                    reply_markup=build_menu_reply_markup(client_type),
+                )
+            ]
+
+        if selected_intent == "bulk_orders":
+            mobile_for_bulk = derive_mobile_from_message(message, mobile)
+            if not mobile_for_bulk:
+                return [
+                    OutgoingMessage(
+                        text="I could not identify your mobile number for bulk order enquiry. Please share contact or send your mobile number.",
+                        reply_markup=build_menu_reply_markup(client_type),
+                    )
+                ]
+
+            bulk_result = create_bulk_order_enquiry(mobile_for_bulk)
+            handover_result = request_human_handover(mobile_for_bulk)
+
+            if bulk_result.success and handover_result.success:
+                return [
+                    OutgoingMessage(
+                        text=f"{bulk_result.message}\n{handover_result.message}",
+                        reply_markup=build_menu_reply_markup(client_type),
+                    )
+                ]
+
+            return [
+                OutgoingMessage(
+                    text=f"{bulk_result.message}\n{handover_result.message}",
                     reply_markup=build_menu_reply_markup(client_type),
                 )
             ]

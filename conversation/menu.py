@@ -58,7 +58,7 @@ SEGMENT_MENU_OPTIONS = {
             "intent": "measurements"
         },
         "6": {
-            "label": "Enquire about bulk orderss",
+            "label": "Enquire about bulk orders",
             "intent": "bulk_orders"
         },
         "7": {
