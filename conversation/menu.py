@@ -122,6 +122,12 @@ FOOTER_MENU_OPTIONS = {
     },
 }
 
+FOOTER_TEXT = (
+    "\n\n--- Navigation ---\n"
+    "9. Chat with a human agent\n"
+    "0. Go back to the main menu"
+)
+
 
 KNOWN_CLIENT_TYPES = {"active_client", "client", "new_user"}
 

@@ -136,6 +136,37 @@ def add_client_address(mobile: str, address1: str, city: str, pincode: str) -> A
     )
 
 
+DELETE_BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/deleteaddress.php"
+
+
+def delete_client_address(mobile: str, address_id: int) -> AddressUpsertResult:
+    payload = {
+        "mobile": mobile,
+        "action": "delete",
+        "address_id": address_id,
+    }
+
+    try:
+        response = requests.post(DELETE_BASE_URL, json=payload, timeout=20)
+        data = response.json() if response.content else {}
+    except Exception:
+        return AddressUpsertResult(
+            success=False,
+            message="Unable to delete address right now. Please try again shortly.",
+        )
+
+    if response.status_code == 200 and str(data.get("status", "")).lower() == "success":
+        return AddressUpsertResult(
+            success=True,
+            message=str(data.get("message") or "address deleted successfully"),
+        )
+
+    return AddressUpsertResult(
+        success=False,
+        message=str(data.get("message") or "Unable to delete address."),
+    )
+
+
 def update_client_address(
     mobile: str,
     address_id: int,

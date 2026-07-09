@@ -29,6 +29,11 @@ class SessionState:
 	awaiting_address_update_id: bool = False
 	awaiting_address_update_line: bool = False
 	awaiting_address_set_main: bool = False
+	awaiting_address_delete_id: bool = False
+	awaiting_pickup_address: bool = False
+	pending_pickup_address_id: int | None = None
+	pending_address_ordered_ids: list[int] = field(default_factory=list)
+	pending_address_list_ids: list[int] = field(default_factory=list)
 	awaiting_order_change_type: bool = False
 	awaiting_order_change_details: bool = False
 	awaiting_order_cancel_reason: bool = False
@@ -36,6 +41,7 @@ class SessionState:
 	pending_address_line: str | None = None
 	pending_address_city: str | None = None
 	pending_address_id: int | None = None
+	address_needed_for_pickup: bool = False
 	last_activity_at: float = field(default_factory=time.time)
 
 

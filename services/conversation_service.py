@@ -5,7 +5,7 @@ import time
 from typing import Any
 
 from conversation.intent_router import get_intent
-from conversation.menu import format_menu_message_with_greeting, get_menu_keyboard
+from conversation.menu import FOOTER_TEXT, format_menu_message_with_greeting, get_menu_keyboard
 from conversation.state_manager import (
     get_client_profile,
     get_session,
@@ -15,7 +15,12 @@ from conversation.state_manager import (
 )
 from crm.alteration_pickup import schedule_alteration_pickup
 from crm.book_appointment import book_store_visit, fetch_available_visit_slots
-from crm.client_address import add_client_address, fetch_client_addresses, update_client_address
+from crm.client_address import (
+    add_client_address,
+    delete_client_address,
+    fetch_client_addresses,
+    update_client_address,
+)
 from crm.client_type import lookup_customer_profile
 from crm.cancel_order import cancel_current_order
 from crm.fabric_delivery import create_fabric_delivery_request
@@ -217,6 +222,23 @@ def build_menu_reply_markup(client_type: str) -> dict[str, Any]:
     }
 
 
+def build_nav_keyboard() -> dict[str, Any]:
+    """Build a keyboard that only shows the navigation footer buttons (9 and 0)."""
+    from conversation.menu import FOOTER_MENU_OPTIONS
+    return {
+        "keyboard": [
+            [{"text": f"9. {FOOTER_MENU_OPTIONS['9']['label']}"}],
+            [{"text": f"0. {FOOTER_MENU_OPTIONS['0']['label']}"}],
+        ],
+        "resize_keyboard": True,
+    }
+
+
+def with_footer(body: str) -> str:
+    """Append the navigation footer to any message body."""
+    return body + FOOTER_TEXT
+
+
 def build_pickup_time_reply_markup() -> dict[str, Any]:
     return {
         "keyboard": [
@@ -315,6 +337,22 @@ def parse_visit_slot_option(raw_text: str, slots: list[str]) -> str | None:
     return None
 
 
+def clear_all_flows(session: Any) -> None:
+    """Clear all in-progress sub-flow flags, returning session to a clean state."""
+    clear_address_update_flow(session)
+    clear_pickup_flow(session)
+    clear_order_change_flow(session)
+    clear_order_cancel_flow(session)
+    session.awaiting_contact = False
+    session.awaiting_registration_name = False
+    session.awaiting_visit_date = False
+    session.awaiting_visit_time = False
+    session.awaiting_fabric_delivery_notes = False
+    session.pending_visit_date = None
+    session.pending_visit_slots = []
+    session.address_needed_for_pickup = False
+
+
 def clear_address_update_flow(session: Any) -> None:
     session.awaiting_address_action = False
     session.awaiting_address_add_line = False
@@ -323,17 +361,22 @@ def clear_address_update_flow(session: Any) -> None:
     session.awaiting_address_update_id = False
     session.awaiting_address_update_line = False
     session.awaiting_address_set_main = False
+    session.awaiting_address_delete_id = False
     session.pending_address_line = None
     session.pending_address_city = None
     session.pending_address_id = None
+    session.pending_address_list_ids = []
 
 
 def clear_pickup_flow(session: Any) -> None:
     session.awaiting_pickup_date = False
     session.awaiting_pickup_time = False
     session.awaiting_alteration_pickup_notes = False
+    session.awaiting_pickup_address = False
     session.pending_pickup_date = None
     session.pending_pickup_time = None
+    session.pending_pickup_address_id = None
+    session.pending_address_ordered_ids = []
     session.pickup_mode = None
 
 
@@ -360,10 +403,10 @@ def build_address_list_message(mobile: str) -> str:
     lines.append("")
 
     if result.addresses:
-        for address in result.addresses:
+        for index, address in enumerate(result.addresses, start=1):
             main_tag = " (Main)" if address.is_main else ""
             location_parts = [part for part in [address.address1, address.city, address.pincode] if part]
-            lines.append(f"ID {address.address_id}: {', '.join(location_parts)}{main_tag}")
+            lines.append(f"{index}. {', '.join(location_parts)}{main_tag}")
     else:
         lines.append("No saved addresses found.")
 
@@ -372,6 +415,7 @@ def build_address_list_message(mobile: str) -> str:
             "",
             "Reply 1 to add a new address.",
             "Reply 2 to update an address or set one as main.",
+            "Reply 3 to delete an address.",
         ]
     )
     return "\n".join(lines)
@@ -495,6 +539,33 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         )
         return [build_main_menu_response(message.user_id, client_type, customer_salutation)]
 
+    # --- Early navigation interceptor: allow escape from any sub-flow ---
+    if message.text:
+        normalized_text = (message.text or "").strip().casefold()
+        if normalized_text in {"0", "menu", "main menu"}:
+            clear_all_flows(existing_session)
+            mobile, client_type, customer_salutation = resolve_client_type(
+                message.text, message.contact_phone, auto_mobile or existing_mobile,
+            )
+            save_client_profile(message.user_id, mobile, client_type, customer_salutation)
+            return [build_main_menu_response(message.user_id, client_type, customer_salutation)]
+
+        if normalized_text in {"9", "handover"}:
+            clear_all_flows(existing_session)
+            mobile_for_handover = derive_mobile_from_message(message, existing_mobile)
+            if not mobile_for_handover:
+                mobile_for_handover = auto_mobile or existing_mobile
+            if not mobile_for_handover:
+                return [
+                    OutgoingMessage(
+                        text="I could not identify your mobile number for human handover. Please share contact or send your mobile number.",
+                        reply_markup=build_contact_keyboard(),
+                    )
+                ]
+            handover_result = request_human_handover(mobile_for_handover)
+            return [OutgoingMessage(text=handover_result.message)]
+    # --- End early navigation interceptor ---
+
     if existing_session.awaiting_registration_name:
         registration_name = (message.text or "").strip()
         if len(registration_name) < 2:
@@ -545,7 +616,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if pickup_date is None:
             return [
                 OutgoingMessage(
-                    text=(
+                    text=with_footer(
                         "Please choose a valid pickup date option:\n"
                         "1. Today's date\n"
                         "2. Tomorrow's date\n"
@@ -560,7 +631,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         existing_session.awaiting_pickup_time = True
         return [
             OutgoingMessage(
-                text="Choose pickup time slot:\n1. Morning (9 AM - 2 PM)\n2. Afternoon (2 PM - 9 PM)",
+                text=with_footer("Choose pickup time slot:\n1. Morning (9 AM - 2 PM)\n2. Afternoon (2 PM - 9 PM)"),
                 reply_markup=build_pickup_time_reply_markup(),
             )
         ]
@@ -570,7 +641,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if pickup_time is None:
             return [
                 OutgoingMessage(
-                    text="Please choose a valid pickup slot: 1 for Morning or 2 for Afternoon.",
+                    text=with_footer("Please choose a valid pickup slot: 1 for Morning or 2 for Afternoon."),
                     reply_markup=build_pickup_time_reply_markup(),
                 )
             ]
@@ -583,7 +654,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             clear_pickup_flow(existing_session)
             return [
                 OutgoingMessage(
-                    text="Unable to schedule pickup because mobile or pickup date is missing. Please choose option 1 again.",
+                    text=with_footer("Unable to schedule pickup because mobile or pickup date is missing. Please choose option 1 again."),
                     reply_markup=build_menu_reply_markup(existing_client_type or "client"),
                 )
             ]
@@ -594,16 +665,46 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             existing_session.pending_pickup_time = pickup_time
             return [
                 OutgoingMessage(
-                    text=(
+                    text=with_footer(
                         "Please share alteration/request notes (optional).\n"
                         "Example: Shirt sleeves need to be shortened.\n"
                         "Reply with 'skip' to continue without notes."
-                    )
+                    ),
+                    reply_markup=build_nav_keyboard(),
                 )
             ]
 
-        schedule_result = schedule_fresh_pickup(mobile_for_pickup, pickup_date, pickup_time)
+        # For fresh pickup, address should already be selected (or we're in address-needed flow)
+        existing_session.pending_pickup_time = pickup_time
+        existing_session.awaiting_pickup_time = False
+
+        # Check if we have an address_id from earlier in the flow
+        address_id = existing_session.pending_pickup_address_id
+
+        # If no address_id, try scheduling without it (API will return needs_address if required)
+        schedule_result = schedule_fresh_pickup(mobile_for_pickup, pickup_date, pickup_time, address_id=address_id)
         clear_pickup_flow(existing_session)
+
+        if schedule_result.needs_address:
+            # No saved address — redirect to address update flow
+            existing_session.address_needed_for_pickup = True
+            existing_session.pending_pickup_date = pickup_date
+            existing_session.pending_pickup_time = pickup_time
+            clear_address_update_flow(existing_session)
+            existing_session.awaiting_address_action = True
+            mobile_for_address = mobile_for_pickup
+            return [
+                OutgoingMessage(
+                    text=(
+                        f"{schedule_result.message}\n\n"
+                        "Please add a delivery/pickup address first so we can schedule the pickup."
+                    ),
+                ),
+                OutgoingMessage(
+                    text=build_address_list_message(mobile_for_address),
+                ),
+            ]
+
         if schedule_result.success:
             # Fresh pickup creates an active order, so switch menu context immediately.
             save_client_profile(
@@ -637,6 +738,68 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             )
         ]
 
+    if existing_session.awaiting_pickup_address:
+        normalized_text = (message.text or "").strip().casefold()
+
+        # Handle "add" option to add a new address, then re-show the selection list
+        if normalized_text in {"add", "add address", "new address"}:
+            existing_session.awaiting_pickup_address = False
+            existing_session.address_needed_for_pickup = True
+            clear_address_update_flow(existing_session)
+            existing_session.awaiting_address_action = True
+            mobile_for_address = derive_mobile_from_message(message, existing_mobile)
+            return [
+                OutgoingMessage(
+                    text=(
+                        "Please add a delivery/pickup address first.\n\n"
+                        "Please reply 1 to add a new address."
+                    ),
+                ),
+                OutgoingMessage(
+                    text=with_footer(build_address_list_message(mobile_for_address) if mobile_for_address else "Please share your mobile number first."),
+                ),
+            ]
+
+        choice_text = normalize_mobile(message.text or "")
+        if not choice_text:
+            return [
+                OutgoingMessage(
+                    text=with_footer("Please enter a valid number from the address list above, or reply 'add' to add a new address."),
+                    reply_markup=build_nav_keyboard(),
+                )
+            ]
+
+        choice_index = int(choice_text) - 1
+        if not (0 <= choice_index < len(existing_session.pending_address_ordered_ids)):
+            return [
+                OutgoingMessage(
+                    text=with_footer("Invalid choice. Please reply with a number from the address list above, or reply 'add' to add a new address."),
+                    reply_markup=build_nav_keyboard(),
+                )
+            ]
+
+        # Address selected — store it and move on to date/time collection
+        address_id = existing_session.pending_address_ordered_ids[choice_index]
+        existing_session.pending_pickup_address_id = address_id
+        existing_session.awaiting_pickup_address = False
+        existing_session.awaiting_pickup_date = True
+
+        pickup_intro = "Please choose pickup date:"
+        if existing_session.pickup_mode == "alteration":
+            pickup_intro = "Please choose alteration/another pickup date:"
+
+        return [
+            OutgoingMessage(
+                text=with_footer(
+                    f"{pickup_intro}\n"
+                    "1. Today's date\n"
+                    "2. Tomorrow's date\n"
+                    "3. Day after tomorrow"
+                ),
+                reply_markup=build_pickup_date_reply_markup(),
+            )
+        ]
+
     if existing_session.awaiting_alteration_pickup_notes:
         mobile_for_pickup = derive_mobile_from_message(message, existing_mobile)
         pickup_date = existing_session.pending_pickup_date
@@ -650,7 +813,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if not mobile_for_pickup or not pickup_date or pickup_time is None:
             return [
                 OutgoingMessage(
-                    text="Unable to schedule alteration pickup due to missing details. Please choose option 2 again.",
+                    text=with_footer("Unable to schedule alteration pickup due to missing details. Please choose option 2 again."),
                     reply_markup=build_menu_reply_markup(existing_client_type or "active_client"),
                 )
             ]
@@ -663,7 +826,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         )
         return [
             OutgoingMessage(
-                text=alteration_result.message,
+                text=with_footer(alteration_result.message),
                 reply_markup=build_menu_reply_markup(existing_client_type or "active_client"),
             )
         ]
@@ -673,7 +836,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if visit_date is None:
             return [
                 OutgoingMessage(
-                    text=(
+                    text=with_footer(
                         "Please choose a valid visit date option:\n"
                         "1. Today's date\n"
                         "2. Tomorrow's date\n"
@@ -687,7 +850,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if not availability_result.success:
             return [
                 OutgoingMessage(
-                    text=availability_result.message,
+                    text=with_footer(availability_result.message),
                     reply_markup=build_pickup_date_reply_markup(),
                 )
             ]
@@ -703,7 +866,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         ]
         return [
             OutgoingMessage(
-                text="\n".join(slot_lines),
+                text=with_footer("\n".join(slot_lines)),
                 reply_markup=build_visit_slot_reply_markup(availability_result.slots),
             )
         ]
@@ -713,7 +876,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if selected_slot is None:
             return [
                 OutgoingMessage(
-                    text="Please choose a valid slot from the listed options.",
+                    text=with_footer("Please choose a valid slot from the listed options."),
                     reply_markup=build_visit_slot_reply_markup(existing_session.pending_visit_slots),
                 )
             ]
@@ -728,7 +891,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if not visit_mobile or not visit_date:
             return [
                 OutgoingMessage(
-                    text="Unable to schedule store visit because mobile or date is missing. Please choose option 3 again.",
+                    text=with_footer("Unable to schedule store visit because mobile or date is missing. Please choose option 3 again."),
                     reply_markup=build_menu_reply_markup(existing_client_type or "client"),
                 )
             ]
@@ -742,7 +905,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
 
         return [
             OutgoingMessage(
-                text=book_result.message,
+                text=with_footer(book_result.message),
                 reply_markup=build_menu_reply_markup(existing_client_type or "client"),
             )
         ]
@@ -754,7 +917,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if not mobile_for_fabric_delivery:
             return [
                 OutgoingMessage(
-                    text="I could not identify your mobile number for fabric delivery request. Please share contact or send your mobile number.",
+                    text=with_footer("I could not identify your mobile number for fabric delivery request. Please share contact or send your mobile number."),
                     reply_markup=build_menu_reply_markup(existing_client_type or "client"),
                 )
             ]
@@ -767,7 +930,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         handover_result = request_human_handover(mobile_for_fabric_delivery)
         return [
             OutgoingMessage(
-                text=f"{fabric_delivery_result.message}\n{handover_result.message}",
+                text=with_footer(f"{fabric_delivery_result.message}\n{handover_result.message}"),
                 reply_markup=build_menu_reply_markup(existing_client_type or "client"),
             )
         ]
@@ -777,43 +940,83 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if normalized_text in {"1", "add", "add address"}:
             existing_session.awaiting_address_action = False
             existing_session.awaiting_address_add_line = True
-            return [OutgoingMessage(text="Please enter address line (house/area/street).")]
+            return [OutgoingMessage(text=with_footer("Please enter address line (house/area/street)."), reply_markup=build_nav_keyboard())]
 
         if normalized_text in {"2", "update", "update address", "set main"}:
             existing_session.awaiting_address_action = False
             existing_session.awaiting_address_update_id = True
-            return [OutgoingMessage(text="Please enter the Address ID you want to update/set as main.")]
+            return [OutgoingMessage(text=with_footer("Please enter the Address ID you want to update/set as main."), reply_markup=build_nav_keyboard())]
+
+        if normalized_text in {"3", "delete", "delete address", "remove", "remove address"}:
+            existing_session.awaiting_address_action = False
+            existing_session.awaiting_address_delete_id = True
+            return [OutgoingMessage(text=with_footer("Please reply with the number of the address you'd like to delete from the list above."), reply_markup=build_nav_keyboard())]
 
         return [
             OutgoingMessage(
-                text="Please reply 1 to add new address or 2 to update/set main.",
+                text=with_footer("Please reply 1 to add new address, 2 to update/set main, or 3 to delete an address."),
+                reply_markup=build_nav_keyboard(),
+            )
+        ]
+
+    if existing_session.awaiting_address_delete_id:
+        choice_text = normalize_mobile(message.text or "")
+        if not choice_text:
+            return [OutgoingMessage(text=with_footer("Please enter a valid number from the address list."), reply_markup=build_nav_keyboard())]
+
+        choice_index = int(choice_text) - 1
+        if not (0 <= choice_index < len(existing_session.pending_address_list_ids)):
+            return [
+                OutgoingMessage(
+                    text=with_footer("Invalid choice. Please reply with the number of the address you'd like to delete."),
+                    reply_markup=build_nav_keyboard(),
+                )
+            ]
+
+        mobile_for_address = derive_mobile_from_message(message, existing_mobile)
+        address_id = existing_session.pending_address_list_ids[choice_index]
+        clear_address_update_flow(existing_session)
+
+        if not mobile_for_address:
+            return [
+                OutgoingMessage(
+                    text=with_footer("Unable to delete address due to missing mobile number. Please choose option 8 again."),
+                    reply_markup=build_menu_reply_markup(existing_client_type or "client"),
+                )
+            ]
+
+        delete_result = delete_client_address(mobile_for_address, address_id)
+        return [
+            OutgoingMessage(
+                text=with_footer(delete_result.message),
+                reply_markup=build_menu_reply_markup(existing_client_type or "client"),
             )
         ]
 
     if existing_session.awaiting_address_add_line:
         address_line = (message.text or "").strip()
         if len(address_line) < 5:
-            return [OutgoingMessage(text="Please enter a valid address line.")]
+            return [OutgoingMessage(text=with_footer("Please enter a valid address line."), reply_markup=build_nav_keyboard())]
 
         existing_session.pending_address_line = address_line
         existing_session.awaiting_address_add_line = False
         existing_session.awaiting_address_add_city = True
-        return [OutgoingMessage(text="Please enter city name.")]
+        return [OutgoingMessage(text=with_footer("Please enter city name."), reply_markup=build_nav_keyboard())]
 
     if existing_session.awaiting_address_add_city:
         city = (message.text or "").strip()
         if len(city) < 2:
-            return [OutgoingMessage(text="Please enter a valid city name.")]
+            return [OutgoingMessage(text=with_footer("Please enter a valid city name."), reply_markup=build_nav_keyboard())]
 
         existing_session.pending_address_city = city
         existing_session.awaiting_address_add_city = False
         existing_session.awaiting_address_add_pincode = True
-        return [OutgoingMessage(text="Please enter 6-digit pincode.")]
+        return [OutgoingMessage(text=with_footer("Please enter 6-digit pincode."), reply_markup=build_nav_keyboard())]
 
     if existing_session.awaiting_address_add_pincode:
         pincode = normalize_mobile(message.text or "")
         if len(pincode) != 6:
-            return [OutgoingMessage(text="Please enter a valid 6-digit pincode.")]
+            return [OutgoingMessage(text=with_footer("Please enter a valid 6-digit pincode."), reply_markup=build_nav_keyboard())]
 
         mobile_for_address = derive_mobile_from_message(message, existing_mobile)
         address_line = existing_session.pending_address_line
@@ -823,15 +1026,118 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if not mobile_for_address or not address_line or not city:
             return [
                 OutgoingMessage(
-                    text="Unable to add address due to missing details. Please choose option 8 again.",
+                    text=with_footer("Unable to add address due to missing details. Please choose option 8 again."),
                     reply_markup=build_menu_reply_markup(existing_client_type or "client"),
                 )
             ]
 
         add_result = add_client_address(mobile_for_address, address_line, city, pincode)
+
+        # If this address was added as part of the pickup flow, continue the pickup
+        if add_result.success and existing_session.pickup_mode is not None:
+            recheck = fetch_client_addresses(mobile_for_address)
+            pickup_date = existing_session.pending_pickup_date
+            pickup_time = existing_session.pending_pickup_time
+
+            # Date/time already collected → schedule now using the saved address
+            if recheck.success and len(recheck.addresses) >= 1 and pickup_date and pickup_time is not None:
+                chosen_address_id = recheck.addresses[0].address_id
+                retry_result = schedule_fresh_pickup(
+                    mobile_for_address, pickup_date, pickup_time, address_id=chosen_address_id,
+                )
+                clear_pickup_flow(existing_session)
+                if retry_result.success:
+                    save_client_profile(
+                        message.user_id,
+                        mobile_for_address,
+                        "active_client",
+                        existing_customer_salutation,
+                    )
+                    _, _, updated_salutation = get_client_profile(message.user_id)
+                    return [
+                        OutgoingMessage(text=add_result.message),
+                        OutgoingMessage(text=retry_result.message),
+                        build_main_menu_response(message.user_id, "active_client", updated_salutation),
+                    ]
+                if retry_result.needs_address:
+                    # Still no usable address — ask to add again
+                    existing_session.address_needed_for_pickup = True
+                    existing_session.awaiting_address_action = True
+                    return [
+                        OutgoingMessage(text=add_result.message),
+                        OutgoingMessage(
+                            text=with_footer("We still could not use that address for pickup. Please reply 1 to add a new address."),
+                            reply_markup=build_nav_keyboard(),
+                        ),
+                    ]
+                return [
+                    OutgoingMessage(text=add_result.message),
+                    OutgoingMessage(text=retry_result.message),
+                ]
+
+            # Date/time not yet collected — continue the flow
+            if recheck.success and len(recheck.addresses) == 1:
+                existing_session.address_needed_for_pickup = False
+                existing_session.pending_pickup_address_id = recheck.addresses[0].address_id
+                existing_session.awaiting_pickup_date = True
+                pickup_intro = "Address added. Please choose pickup date:"
+                if existing_session.pickup_mode == "alteration":
+                    pickup_intro = "Address added. Please choose alteration/another pickup date:"
+                return [
+                    OutgoingMessage(text=add_result.message),
+                    OutgoingMessage(
+                        text=with_footer(
+                            f"{pickup_intro}\n"
+                            "1. Today's date\n"
+                            "2. Tomorrow's date\n"
+                            "3. Day after tomorrow"
+                        ),
+                        reply_markup=build_pickup_date_reply_markup(),
+                    ),
+                ]
+
+            if recheck.success and len(recheck.addresses) > 1:
+                existing_session.address_needed_for_pickup = False
+                existing_session.awaiting_pickup_address = True
+                existing_session.pending_address_ordered_ids = [a.address_id for a in recheck.addresses]
+
+                address_lines = []
+                if recheck.customer_name:
+                    address_lines.append(f"Saved addresses for {recheck.customer_name}:")
+                else:
+                    address_lines.append("Saved addresses:")
+                address_lines.append("")
+                for index, address in enumerate(recheck.addresses, start=1):
+                    main_tag = " (Main)" if address.is_main else ""
+                    location_parts = [part for part in [address.address1, address.city, address.pincode] if part]
+                    address_lines.append(f"{index}. {', '.join(location_parts)}{main_tag}")
+                address_lines.extend([
+                    "",
+                    "Reply with the number of the address you'd like to use for this pickup,",
+                    "or reply 'add' to add another address.",
+                ])
+                return [
+                    OutgoingMessage(text=add_result.message),
+                    OutgoingMessage(
+                        text=with_footer("\n".join(address_lines)),
+                        reply_markup=build_nav_keyboard(),
+                    ),
+                ]
+
+            # Still no address saved
+            existing_session.address_needed_for_pickup = True
+            existing_session.awaiting_address_action = True
+            return [
+                OutgoingMessage(text=add_result.message),
+                OutgoingMessage(
+                    text=with_footer("We could not save that address. Please reply 1 to add a new address."),
+                    reply_markup=build_nav_keyboard(),
+                ),
+            ]
+
         return [
             OutgoingMessage(
-                text=add_result.message,
+                text=with_footer(add_result.message),
                 reply_markup=build_menu_reply_markup(existing_client_type or "client"),
             )
         ]
@@ -839,14 +1145,15 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
     if existing_session.awaiting_address_update_id:
         address_id_text = normalize_mobile(message.text or "")
         if not address_id_text:
-            return [OutgoingMessage(text="Please enter a valid numeric Address ID.")]
+            return [OutgoingMessage(text=with_footer("Please enter a valid numeric Address ID."), reply_markup=build_nav_keyboard())]
 
         existing_session.pending_address_id = int(address_id_text)
         existing_session.awaiting_address_update_id = False
         existing_session.awaiting_address_update_line = True
         return [
             OutgoingMessage(
-                text="Enter new address line to update, or reply 'skip' to keep existing line.",
+                text=with_footer("Enter new address line to update, or reply 'skip' to keep existing line."),
+                reply_markup=build_nav_keyboard(),
             )
         ]
 
@@ -856,12 +1163,12 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             existing_session.pending_address_line = None
         else:
             if len(update_line) < 5:
-                return [OutgoingMessage(text="Please enter a valid address line or reply 'skip'.")]
+                return [OutgoingMessage(text=with_footer("Please enter a valid address line or reply 'skip'."), reply_markup=build_nav_keyboard())]
             existing_session.pending_address_line = update_line
 
         existing_session.awaiting_address_update_line = False
         existing_session.awaiting_address_set_main = True
-        return [OutgoingMessage(text="Set this address as main? Reply yes or no.")]
+        return [OutgoingMessage(text=with_footer("Set this address as main? Reply yes or no."), reply_markup=build_nav_keyboard())]
 
     if existing_session.awaiting_address_set_main:
         normalized_text = (message.text or "").strip().casefold()
@@ -870,7 +1177,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         elif normalized_text in {"no", "n", "0", "skip"}:
             set_main = None
         else:
-            return [OutgoingMessage(text="Please reply yes or no.")]
+            return [OutgoingMessage(text=with_footer("Please reply yes or no."), reply_markup=build_nav_keyboard())]
 
         mobile_for_address = derive_mobile_from_message(message, existing_mobile)
         address_id = existing_session.pending_address_id
@@ -880,7 +1187,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if not mobile_for_address or address_id is None:
             return [
                 OutgoingMessage(
-                    text="Unable to update address due to missing details. Please choose option 8 again.",
+                    text=with_footer("Unable to update address due to missing details. Please choose option 8 again."),
                     reply_markup=build_menu_reply_markup(existing_client_type or "client"),
                 )
             ]
@@ -893,7 +1200,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         )
         return [
             OutgoingMessage(
-                text=update_result.message,
+                text=with_footer(update_result.message),
                 reply_markup=build_menu_reply_markup(existing_client_type or "client"),
             )
         ]
@@ -904,26 +1211,27 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if selected_type is None:
             return [
                 OutgoingMessage(
-                    text=(
+                    text=with_footer(
                         "Please choose a valid request type:\n"
                         "1. Design change\n"
                         "2. Size change\n"
                         "3. Item change\n"
                         "4. Cancel\n"
                         "5. Other"
-                    )
+                    ),
+                    reply_markup=build_nav_keyboard(),
                 )
             ]
 
         existing_session.pending_order_change_type = selected_type
         existing_session.awaiting_order_change_type = False
         existing_session.awaiting_order_change_details = True
-        return [OutgoingMessage(text="Please describe your requested changes in detail.")]
+        return [OutgoingMessage(text=with_footer("Please describe your requested changes in detail."), reply_markup=build_nav_keyboard())]
 
     if existing_session.awaiting_order_change_details:
         details = (message.text or "").strip()
         if len(details) < 5:
-            return [OutgoingMessage(text="Please enter a valid request description.")]
+            return [OutgoingMessage(text=with_footer("Please enter a valid request description."), reply_markup=build_nav_keyboard())]
 
         mobile_for_change = derive_mobile_from_message(message, existing_mobile)
         request_type = existing_session.pending_order_change_type or "other"
@@ -932,7 +1240,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if not mobile_for_change:
             return [
                 OutgoingMessage(
-                    text="I could not identify your mobile number for order change request. Please share contact or send your mobile number.",
+                    text=with_footer("I could not identify your mobile number for order change request. Please share contact or send your mobile number."),
                     reply_markup=build_menu_reply_markup(existing_client_type or "active_client"),
                 )
             ]
@@ -945,7 +1253,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         handover_result = request_human_handover(mobile_for_change)
         return [
             OutgoingMessage(
-                text=f"{create_result.message}\n{handover_result.message}",
+                text=with_footer(f"{create_result.message}\n{handover_result.message}"),
                 reply_markup=build_menu_reply_markup(existing_client_type or "active_client"),
             )
         ]
@@ -953,7 +1261,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
     if existing_session.awaiting_order_cancel_reason:
         reason = (message.text or "").strip()
         if len(reason) < 3:
-            return [OutgoingMessage(text="Please enter a valid cancellation reason.")]
+            return [OutgoingMessage(text=with_footer("Please enter a valid cancellation reason."), reply_markup=build_nav_keyboard())]
 
         mobile_for_cancel = derive_mobile_from_message(message, existing_mobile)
         clear_order_cancel_flow(existing_session)
@@ -961,7 +1269,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if not mobile_for_cancel:
             return [
                 OutgoingMessage(
-                    text="I could not identify your mobile number for order cancellation. Please share contact or send your mobile number.",
+                    text=with_footer("I could not identify your mobile number for order cancellation. Please share contact or send your mobile number."),
                     reply_markup=build_menu_reply_markup(existing_client_type or "active_client"),
                 )
             ]
@@ -977,7 +1285,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         )
         return [
             OutgoingMessage(
-                text=cancel_result.message,
+                text=with_footer(cancel_result.message),
                 reply_markup=build_menu_reply_markup(existing_client_type or "active_client"),
             )
         ]
@@ -1040,7 +1348,8 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             existing_session.awaiting_registration_name = True
             return [
                 OutgoingMessage(
-                    text="Please complete registration first. Enter your full name to continue.",
+                    text=with_footer("Please complete registration first. Enter your full name to continue."),
+                    reply_markup=build_nav_keyboard(),
                 )
             ]
 
@@ -1050,26 +1359,88 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                 save_client_profile(message.user_id, mobile_for_registration, client_type, customer_salutation)
 
             existing_session.awaiting_registration_name = True
-            return [OutgoingMessage(text="Please enter your full name for registration.")]
+            return [OutgoingMessage(text=with_footer("Please enter your full name for registration."), reply_markup=build_nav_keyboard())]
 
         if selected_intent == "new_order":
             clear_pickup_flow(existing_session)
-            existing_session.awaiting_pickup_date = True
             existing_session.pickup_mode = "alteration" if client_type == "active_client" else "fresh"
 
-            pickup_intro = "Please choose pickup date:"
-            if existing_session.pickup_mode == "alteration":
-                pickup_intro = "Please choose alteration/another pickup date:"
+            # Fetch addresses FIRST before asking for date/time
+            mobile_for_pickup = derive_mobile_from_message(message, mobile)
+            if not mobile_for_pickup:
+                return [
+                    OutgoingMessage(
+                        text=with_footer("I could not identify your mobile number for pickup scheduling. Please share contact or send your mobile number."),
+                        reply_markup=build_menu_reply_markup(client_type),
+                    )
+                ]
+
+            address_result = fetch_client_addresses(mobile_for_pickup)
+
+            # Case 1: No saved addresses - redirect to add address
+            if not address_result.success or not address_result.addresses:
+                existing_session.address_needed_for_pickup = True
+                clear_address_update_flow(existing_session)
+                existing_session.awaiting_address_action = True
+                return [
+                    OutgoingMessage(
+                        text=(
+                            "No saved addresses found. Please add a delivery/pickup address first so we can schedule the pickup.\n\n"
+                            "Please reply 1 to add a new address."
+                        ),
+                    ),
+                    OutgoingMessage(
+                        text=with_footer(build_address_list_message(mobile_for_pickup)),
+                    ),
+                ]
+
+            # Case 2: Single address - auto-select and proceed to date selection
+            if len(address_result.addresses) == 1:
+                existing_session.pending_pickup_address_id = address_result.addresses[0].address_id
+                existing_session.awaiting_pickup_date = True
+
+                pickup_intro = "Please choose pickup date:"
+                if existing_session.pickup_mode == "alteration":
+                    pickup_intro = "Please choose alteration/another pickup date:"
+
+                return [
+                    OutgoingMessage(
+                        text=with_footer(
+                            f"{pickup_intro}\n"
+                            "1. Today's date\n"
+                            "2. Tomorrow's date\n"
+                            "3. Day after tomorrow"
+                        ),
+                        reply_markup=build_pickup_date_reply_markup(),
+                    )
+                ]
+
+            # Case 3: Multiple addresses - let customer select
+            existing_session.awaiting_pickup_address = True
+            existing_session.pending_address_ordered_ids = [a.address_id for a in address_result.addresses]
+
+            address_lines: list[str] = []
+            if address_result.customer_name:
+                address_lines.append(f"Saved addresses for {address_result.customer_name}:")
+            else:
+                address_lines.append("Saved addresses:")
+            address_lines.append("")
+
+            for index, address in enumerate(address_result.addresses, start=1):
+                main_tag = " (Main)" if address.is_main else ""
+                location_parts = [part for part in [address.address1, address.city, address.pincode] if part]
+                address_lines.append(f"{index}. {', '.join(location_parts)}{main_tag}")
+
+            address_lines.extend([
+                "",
+                "Reply with the number of the address you'd like to use for this pickup,",
+                "or reply 'add' to add a new address."
+            ])
 
             return [
                 OutgoingMessage(
-                    text=(
-                        f"{pickup_intro}\n"
-                        "1. Today's date\n"
-                        "2. Tomorrow's date\n"
-                        "3. Day after tomorrow"
-                    ),
-                    reply_markup=build_pickup_date_reply_markup(),
+                    text=with_footer("\n".join(address_lines)),
+                    reply_markup=build_nav_keyboard(),
                 )
             ]
 
@@ -1080,7 +1451,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             existing_session.pending_visit_slots = []
             return [
                 OutgoingMessage(
-                    text=(
+                    text=with_footer(
                         "Please choose visit date:\n"
                         "1. Today's date\n"
                         "2. Tomorrow's date\n"
@@ -1191,11 +1562,12 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             existing_session.awaiting_fabric_delivery_notes = True
             return [
                 OutgoingMessage(
-                    text=(
+                    text=with_footer(
                         "Please share a short note for fabric delivery (optional).\n"
                         "Example: 3 meters of cotton fabric for a shirt.\n"
                         "Reply with 'skip' to continue without notes."
                     ),
+                    reply_markup=build_nav_keyboard(),
                 )
             ]
 
@@ -1204,21 +1576,22 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             if not mobile_for_change:
                 return [
                     OutgoingMessage(
-                        text="I could not identify your mobile number for order change request. Please share contact or send your mobile number.",
+                        text=with_footer("I could not identify your mobile number for order change request. Please share contact or send your mobile number."),
                         reply_markup=build_menu_reply_markup(client_type),
                     )
                 ]
 
             clear_order_change_flow(existing_session)
             existing_session.awaiting_order_change_type = True
-            return [OutgoingMessage(text=build_order_change_intro_message(mobile_for_change))]
+            return [OutgoingMessage(text=with_footer(build_order_change_intro_message(mobile_for_change)), reply_markup=build_nav_keyboard())]
 
         if selected_intent == "order_cancel":
             clear_order_cancel_flow(existing_session)
             existing_session.awaiting_order_cancel_reason = True
             return [
                 OutgoingMessage(
-                    text="Please share the reason for cancelling your current order.",
+                    text=with_footer("Please share the reason for cancelling your current order."),
+                    reply_markup=build_nav_keyboard(),
                 )
             ]
 
@@ -1227,16 +1600,23 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             if not mobile_for_address:
                 return [
                     OutgoingMessage(
-                        text="I could not identify your mobile number for address update. Please share contact or send your mobile number.",
+                        text=with_footer("I could not identify your mobile number for address update. Please share contact or send your mobile number."),
                         reply_markup=build_menu_reply_markup(client_type),
                     )
                 ]
 
+            # Store address IDs in order for numbered reference in delete/update flows
+            address_result = fetch_client_addresses(mobile_for_address)
+
             clear_address_update_flow(existing_session)
+            existing_session.pending_address_list_ids = (
+                [a.address_id for a in address_result.addresses] if address_result.success else []
+            )
             existing_session.awaiting_address_action = True
             return [
                 OutgoingMessage(
-                    text=build_address_list_message(mobile_for_address),
+                    text=with_footer(build_address_list_message(mobile_for_address)),
+                    reply_markup=build_nav_keyboard(),
                 )
             ]
 
