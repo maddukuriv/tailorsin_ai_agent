@@ -612,9 +612,11 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                 "active_client",
                 existing_customer_salutation,
             )
+            # Retrieve updated profile to ensure we have the latest salutation
+            _, _, updated_salutation = get_client_profile(message.user_id)
             return [
                 OutgoingMessage(text=schedule_result.message),
-                build_main_menu_response(message.user_id, "active_client", existing_customer_salutation),
+                build_main_menu_response(message.user_id, "active_client", updated_salutation),
             ]
 
         if schedule_result.conflict_open_order:
