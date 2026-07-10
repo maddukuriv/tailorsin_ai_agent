@@ -1395,28 +1395,8 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                     ),
                 ]
 
-            # Case 2: Single address - auto-select and proceed to date selection
-            if len(address_result.addresses) == 1:
-                existing_session.pending_pickup_address_id = address_result.addresses[0].address_id
-                existing_session.awaiting_pickup_date = True
-
-                pickup_intro = "Please choose pickup date:"
-                if existing_session.pickup_mode == "alteration":
-                    pickup_intro = "Please choose alteration/another pickup date:"
-
-                return [
-                    OutgoingMessage(
-                        text=with_footer(
-                            f"{pickup_intro}\n"
-                            "1. Today's date\n"
-                            "2. Tomorrow's date\n"
-                            "3. Day after tomorrow"
-                        ),
-                        reply_markup=build_pickup_date_reply_markup(),
-                    )
-                ]
-
-            # Case 3: Multiple addresses - let customer select
+            # One or more addresses - always show the list so the customer can
+            # confirm or add/correct before the order is placed.
             existing_session.awaiting_pickup_address = True
             existing_session.pending_address_ordered_ids = [a.address_id for a in address_result.addresses]
 
