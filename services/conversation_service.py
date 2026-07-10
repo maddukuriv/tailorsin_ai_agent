@@ -30,6 +30,7 @@ from crm.human_handover import request_human_handover
 from crm.order_change_request import create_order_change_request, list_order_change_requests
 from crm.order_status import fetch_current_order_status
 from crm.schedule_pickup import schedule_fresh_pickup
+from crm.schedule_another_pickup import schedule_another_pickup
 from crm.user_register import register_new_client
 from intents.browse import build_browse_response
 from intents.measurements import build_measurements_response
@@ -682,8 +683,11 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         # Check if we have an address_id from earlier in the flow
         address_id = existing_session.pending_pickup_address_id
 
+        # Select the scheduling API based on the pickup mode
+        schedule_func = schedule_another_pickup if pickup_mode == "another" else schedule_fresh_pickup
+
         # If no address_id, try scheduling without it (API will return needs_address if required)
-        schedule_result = schedule_fresh_pickup(mobile_for_pickup, pickup_date, pickup_time, address_id=address_id)
+        schedule_result = schedule_func(mobile_for_pickup, pickup_date, pickup_time, address_id=address_id)
         clear_pickup_flow(existing_session)
 
         if schedule_result.needs_address:
@@ -1043,7 +1047,8 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             # Date/time already collected → schedule now using the saved address
             if recheck.success and len(recheck.addresses) >= 1 and pickup_date and pickup_time is not None:
                 chosen_address_id = recheck.addresses[0].address_id
-                retry_result = schedule_fresh_pickup(
+                retry_schedule_func = schedule_another_pickup if existing_session.pickup_mode == "another" else schedule_fresh_pickup
+                retry_result = retry_schedule_func(
                     mobile_for_address, pickup_date, pickup_time, address_id=chosen_address_id,
                 )
                 clear_pickup_flow(existing_session)
@@ -1284,6 +1289,22 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             order_id=order_id_int,
             reason=reason,
         )
+
+        if cancel_result.success:
+            # The active order is gone, so the customer is no longer an
+            # active_client. Transition them back to the regular client menu.
+            save_client_profile(
+                message.user_id,
+                mobile_for_cancel,
+                "client",
+                existing_customer_salutation,
+            )
+            _, _, updated_salutation = get_client_profile(message.user_id)
+            return [
+                OutgoingMessage(text=cancel_result.message),
+                build_main_menu_response(message.user_id, "client", updated_salutation),
+            ]
+
         return [
             OutgoingMessage(
                 text=with_footer(cancel_result.message),
@@ -1364,7 +1385,10 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
 
         if selected_intent == "new_order":
             clear_pickup_flow(existing_session)
-            existing_session.pickup_mode = "alteration" if client_type == "active_client" else "fresh"
+            # active_client's "Start a new pickup/order request" uses the
+            # scheduleanotherpickup.php endpoint (mode "another"), mirroring the
+            # fresh pickup flow (address -> date -> time) used by client option 1.
+            existing_session.pickup_mode = "another" if client_type == "active_client" else "fresh"
 
             # Fetch addresses FIRST before asking for date/time
             mobile_for_pickup = derive_mobile_from_message(message, mobile)

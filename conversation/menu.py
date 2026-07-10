@@ -117,7 +117,7 @@ FOOTER_MENU_OPTIONS = {
         "intent": "handover",
     },
     "0": {
-        "label": "Go back to the main menu",
+        "label": "Main menu",
         "intent": "main_menu",
     },
 }
