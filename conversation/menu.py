@@ -2,15 +2,15 @@ SEGMENT_MENU_OPTIONS = {
 
     "active_client": {
         "1": {
-            "label": "Check the status of my current order",
+            "label": "Track my current order",
             "intent": "order_status"
         },
         "2": {
-            "label": "Start a new pickup/order request",
+            "label": "Place a new order / Schedule a pickup",
             "intent": "new_order"
         },
         "3": {
-            "label": "Request changes to my current order",
+            "label": "Modify my current order",
             "intent": "order_changes"
         },
         "4": {
@@ -18,19 +18,19 @@ SEGMENT_MENU_OPTIONS = {
             "intent": "order_cancel"
         },
         "5": {
-            "label": "View my saved measurements",
+            "label": "View my measurements",
             "intent": "measurements"
         },
         "6": {
-            "label": "Schedule a visit",
+            "label": "Book a visit",
             "intent": "book_visit"
         },
         "7": {
-            "label": "Get a fabric requirement and price estimate",
+            "label": "Fabric requirement & price estimate",
             "intent": "fabric_estimate"
         },
         "8": {
-            "label": "View the price catalogue",
+            "label": "Price catalogue",
             "intent": "pricing"
         }
 
@@ -38,23 +38,23 @@ SEGMENT_MENU_OPTIONS = {
 
     "client": {
         "1": {
-            "label": "Schedule a pickup",
+            "label": "Place a new order / Schedule a pickup",
             "intent": "new_order"
         },
         "2": {
-            "label": "View the price catalogue",
+            "label": "Price catalogue",
             "intent": "pricing"
         },
         "3": {
-            "label": "Schedule a visit",
+            "label": "Book a visit",
             "intent": "book_visit"
         },
         "4": {
-            "label": "Get a fabric requirement and price estimate",
+            "label": "Fabric requirement & price estimate",
             "intent": "fabric_estimate"
         },
         "5": {
-            "label": "View my saved measurements",
+            "label": "View my measurements",
             "intent": "measurements"
         },
         "6": {
@@ -62,7 +62,7 @@ SEGMENT_MENU_OPTIONS = {
             "intent": "alteration_pickup_recent"
         },
         "7": {
-            "label": "Arrange fabric delivery to our store",
+            "label": "Send fabric to our store",
             "intent": "fabric_delivery"
         },
         "8": {
@@ -74,7 +74,7 @@ SEGMENT_MENU_OPTIONS = {
 
     "new_user": {
         "1": {
-            "label": "Explore the garments we can stitch",
+            "label": "Garments we can stitch",
             "intent": "browse"
         },
         "2": {
@@ -82,27 +82,27 @@ SEGMENT_MENU_OPTIONS = {
             "intent": "about"
         },
         "3": {
-            "label": "View the price catalogue",
+            "label": "Price catalogue",
             "intent": "pricing"
         },
         "4": {
-            "label": "Understand our measurement process",
+            "label": "How measurement process works",
             "intent": "measurement"
         },
         "5": {
-            "label": "Check delivery timelines",
+            "label": "Delivery timelines",
             "intent": "delivery"
         },
         "6": {
-            "label": "Check our service areas",
+            "label": "Service areas",
             "intent": "service_area"
         },
         "7": {
-            "label": "Schedule a visit",
+            "label": "Book a visit",
             "intent": "visit"
         },
         "8": {
-            "label": "Register and place your first order",
+            "label": "Register & place order",
             "intent": "register"
         }
 
