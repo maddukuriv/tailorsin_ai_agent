@@ -18,8 +18,8 @@ SEGMENT_MENU_OPTIONS = {
             "intent": "order_cancel"
         },
         "5": {
-            "label": "View my measurements",
-            "intent": "measurements"
+            "label": "Recent order issues / Alteration pickup",
+            "intent": "alteration_pickup_recent"
         },
         "6": {
             "label": "Book a visit",
