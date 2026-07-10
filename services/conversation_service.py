@@ -28,7 +28,7 @@ from crm.bulk_order import create_bulk_order_enquiry
 from crm.delivered_orders import fetch_delivered_orders
 from crm.human_handover import request_human_handover
 from crm.order_change_request import create_order_change_request, list_order_change_requests
-from crm.order_status import fetch_current_order_status
+from crm.order_status import fetch_all_active_orders, fetch_current_order_status
 from crm.schedule_pickup import schedule_fresh_pickup
 from crm.schedule_another_pickup import schedule_another_pickup
 from crm.user_register import register_new_client
@@ -386,13 +386,19 @@ def clear_pickup_flow(session: Any) -> None:
 
 
 def clear_order_change_flow(session: Any) -> None:
+    session.awaiting_order_change_select = False
     session.awaiting_order_change_type = False
     session.awaiting_order_change_details = False
     session.pending_order_change_type = None
+    session.pending_change_order_id = None
+    session.pending_change_order_ids = []
 
 
 def clear_order_cancel_flow(session: Any) -> None:
+    session.awaiting_order_cancel_select = False
     session.awaiting_order_cancel_reason = False
+    session.pending_cancel_order_id = None
+    session.pending_cancel_order_ids = []
 
 
 async def build_address_list_message(mobile: str) -> str:
@@ -1313,6 +1319,38 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
             )
         ]
 
+    if existing_session.awaiting_order_change_select:
+        choice_text = normalize_mobile(message.text or "")
+        if not choice_text:
+            return [
+                OutgoingMessage(
+                    text=with_footer("Please enter a valid number from the orders list above."),
+                    reply_markup=build_nav_keyboard(),
+                )
+            ]
+
+        choice_index = int(choice_text) - 1
+        if not (0 <= choice_index < len(existing_session.pending_change_order_ids)):
+            return [
+                OutgoingMessage(
+                    text=with_footer("Invalid choice. Please reply with a number from the orders list above."),
+                    reply_markup=build_nav_keyboard(),
+                )
+            ]
+
+        existing_session.pending_change_order_id = existing_session.pending_change_order_ids[choice_index]
+        existing_session.awaiting_order_change_select = False
+        existing_session.awaiting_order_change_type = True
+
+        mobile_for_change = derive_mobile_from_message(message, existing_mobile)
+        intro_message = await build_order_change_intro_message(mobile_for_change) if mobile_for_change else ""
+        return [
+            OutgoingMessage(
+                text=with_footer(f"Selected Order #{existing_session.pending_change_order_id}.\n\n{intro_message}"),
+                reply_markup=build_nav_keyboard(),
+            )
+        ]
+
     if existing_session.awaiting_order_change_type:
         normalized_text = (message.text or "").strip().casefold()
         selected_type = ORDER_CHANGE_TYPE_MAP.get(normalized_text)
@@ -1343,6 +1381,7 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
 
         mobile_for_change = derive_mobile_from_message(message, existing_mobile)
         request_type = existing_session.pending_order_change_type or "other"
+        order_id = existing_session.pending_change_order_id
         clear_order_change_flow(existing_session)
 
         if not mobile_for_change:
@@ -1357,6 +1396,7 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
             mobile=mobile_for_change,
             request_type=request_type,
             details=details,
+            order_id=order_id,
         )
         handover_result = await request_human_handover(mobile_for_change)
         return [
@@ -1366,12 +1406,42 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
             )
         ]
 
+    if existing_session.awaiting_order_cancel_select:
+        choice_text = normalize_mobile(message.text or "")
+        if not choice_text:
+            return [
+                OutgoingMessage(
+                    text=with_footer("Please enter a valid number from the orders list above."),
+                    reply_markup=build_nav_keyboard(),
+                )
+            ]
+
+        choice_index = int(choice_text) - 1
+        if not (0 <= choice_index < len(existing_session.pending_cancel_order_ids)):
+            return [
+                OutgoingMessage(
+                    text=with_footer("Invalid choice. Please reply with a number from the orders list above."),
+                    reply_markup=build_nav_keyboard(),
+                )
+            ]
+
+        existing_session.pending_cancel_order_id = existing_session.pending_cancel_order_ids[choice_index]
+        existing_session.awaiting_order_cancel_select = False
+        existing_session.awaiting_order_cancel_reason = True
+        return [
+            OutgoingMessage(
+                text=with_footer(f"Please share the reason for cancelling Order #{existing_session.pending_cancel_order_id}."),
+                reply_markup=build_nav_keyboard(),
+            )
+        ]
+
     if existing_session.awaiting_order_cancel_reason:
         reason = (message.text or "").strip()
         if len(reason) < 3:
             return [OutgoingMessage(text=with_footer("Please enter a valid cancellation reason."), reply_markup=build_nav_keyboard())]
 
         mobile_for_cancel = derive_mobile_from_message(message, existing_mobile)
+        order_id_int = existing_session.pending_cancel_order_id
         clear_order_cancel_flow(existing_session)
 
         if not mobile_for_cancel:
@@ -1382,10 +1452,6 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
                 )
             ]
 
-        status_result = await fetch_current_order_status(mobile_for_cancel)
-        order_id = status_result.order.order_id if status_result.success and status_result.order else None
-        order_id_int = int(order_id) if isinstance(order_id, str) and order_id.isdigit() else None
-
         cancel_result = await cancel_current_order(
             mobile=mobile_for_cancel,
             order_id=order_id_int,
@@ -1393,19 +1459,34 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
         )
 
         if cancel_result.success:
-            # The active order is gone, so the customer is no longer an
-            # active_client. Transition them back to the regular client menu.
-            await save_client_profile(
-                message.user_id,
-                mobile_for_cancel,
-                "client",
-                existing_customer_salutation,
-            )
-            _, _, updated_salutation = await get_client_profile(message.user_id)
-            return [
-                OutgoingMessage(text=cancel_result.message),
-                await build_main_menu_response(message.user_id, "client", updated_salutation),
-            ]
+            # After cancellation, re-check if there are still active orders
+            recheck_orders = await fetch_all_active_orders(mobile_for_cancel)
+            if recheck_orders.success and recheck_orders.orders:
+                # Still has active orders — stay in active_client menu
+                await save_client_profile(
+                    message.user_id,
+                    mobile_for_cancel,
+                    "active_client",
+                    existing_customer_salutation,
+                )
+                _, _, updated_salutation = await get_client_profile(message.user_id)
+                return [
+                    OutgoingMessage(text=cancel_result.message),
+                    await build_main_menu_response(message.user_id, "active_client", updated_salutation),
+                ]
+            else:
+                # No more active orders — transition to client menu
+                await save_client_profile(
+                    message.user_id,
+                    mobile_for_cancel,
+                    "client",
+                    existing_customer_salutation,
+                )
+                _, _, updated_salutation = await get_client_profile(message.user_id)
+                return [
+                    OutgoingMessage(text=cancel_result.message),
+                    await build_main_menu_response(message.user_id, "client", updated_salutation),
+                ]
 
         return [
             OutgoingMessage(
@@ -1761,15 +1842,88 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
                 ]
 
             clear_order_change_flow(existing_session)
-            existing_session.awaiting_order_change_type = True
-            return [OutgoingMessage(text=with_footer(await build_order_change_intro_message(mobile_for_change)), reply_markup=build_nav_keyboard())]
+
+            # Fetch active orders so the customer can choose which order to modify
+            active_orders_result = await fetch_all_active_orders(mobile_for_change)
+            if not active_orders_result.success or not active_orders_result.orders:
+                return [
+                    OutgoingMessage(
+                        text=with_footer(
+                            active_orders_result.message if not active_orders_result.success
+                            else "You have no active orders to modify at this time."
+                        ),
+                        reply_markup=build_menu_reply_markup(client_type),
+                    )
+                ]
+
+            existing_session.awaiting_order_change_select = True
+            existing_session.pending_change_order_ids = [int(order.order_id) for order in active_orders_result.orders]
+
+            order_lines: list[str] = ["Here are your current active orders:", ""]
+            for index, order in enumerate(active_orders_result.orders, start=1):
+                order_lines.append(f"{index}. Order #{order.order_id} — {order.stage_label}")
+                if order.order_date:
+                    order_lines.append(f"   Ordered: {order.order_date}")
+                if order.pickup_date:
+                    pickup_line = f"   Pickup: {order.pickup_date}"
+                    if order.pickup_time:
+                        pickup_line += f" ({order.pickup_time})"
+                    order_lines.append(pickup_line)
+                order_lines.append("")
+
+            order_lines.append("Reply with the number of the order you'd like to modify.")
+
+            return [
+                OutgoingMessage(
+                    text=with_footer("\n".join(order_lines)),
+                    reply_markup=build_nav_keyboard(),
+                )
+            ]
 
         if selected_intent == "order_cancel":
             clear_order_cancel_flow(existing_session)
-            existing_session.awaiting_order_cancel_reason = True
+            mobile_for_cancel = derive_mobile_from_message(message, mobile)
+            if not mobile_for_cancel:
+                return [
+                    OutgoingMessage(
+                        text=with_footer("I could not identify your mobile number for order cancellation. Please share contact or send your mobile number."),
+                        reply_markup=build_contact_keyboard(),
+                    )
+                ]
+
+            # Fetch all active orders so the customer can choose which one to cancel
+            orders_result = await fetch_all_active_orders(mobile_for_cancel)
+            if not orders_result.success or not orders_result.orders:
+                return [
+                    OutgoingMessage(
+                        text=with_footer(
+                            orders_result.message if not orders_result.success
+                            else "You have no active orders to cancel at this time."
+                        ),
+                        reply_markup=build_menu_reply_markup(existing_client_type or "active_client"),
+                    )
+                ]
+
+            existing_session.awaiting_order_cancel_select = True
+            existing_session.pending_cancel_order_ids = [int(order.order_id) for order in orders_result.orders]
+
+            order_lines: list[str] = ["Here are your current active orders:", ""]
+            for index, order in enumerate(orders_result.orders, start=1):
+                order_lines.append(f"{index}. Order #{order.order_id} — {order.stage_label}")
+                if order.order_date:
+                    order_lines.append(f"   Ordered: {order.order_date}")
+                if order.pickup_date:
+                    pickup_line = f"   Pickup: {order.pickup_date}"
+                    if order.pickup_time:
+                        pickup_line += f" ({order.pickup_time})"
+                    order_lines.append(pickup_line)
+                order_lines.append("")
+
+            order_lines.append("Reply with the number of the order you'd like to cancel.")
+
             return [
                 OutgoingMessage(
-                    text=with_footer("Please share the reason for cancelling your current order."),
+                    text=with_footer("\n".join(order_lines)),
                     reply_markup=build_nav_keyboard(),
                 )
             ]
