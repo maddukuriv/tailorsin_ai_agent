@@ -58,8 +58,8 @@ SEGMENT_MENU_OPTIONS = {
             "intent": "measurements"
         },
         "6": {
-            "label": "Enquire about bulk orders",
-            "intent": "bulk_orders"
+            "label": "Recent order issues / Alteration pickup",
+            "intent": "alteration_pickup_recent"
         },
         "7": {
             "label": "Arrange fabric delivery to our store",

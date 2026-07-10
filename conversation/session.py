@@ -33,6 +33,9 @@ class SessionState:
 	awaiting_pickup_address: bool = False
 	pending_pickup_address_id: int | None = None
 	pending_address_ordered_ids: list[int] = field(default_factory=list)
+	awaiting_alteration_order: bool = False
+	pending_alteration_order_ids: list[int] = field(default_factory=list)
+	pending_alteration_order_id: int | None = None
 	pending_address_list_ids: list[int] = field(default_factory=list)
 	awaiting_order_change_type: bool = False
 	awaiting_order_change_details: bool = False

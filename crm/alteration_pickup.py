@@ -27,6 +27,7 @@ def schedule_alteration_pickup(
     pickup_date: str,
     pickup_time: int,
     order_id: int | None = None,
+    address_id: int | None = None,
     notes: str | None = None,
 ) -> AlterationPickupResult:
     payload: dict[str, object] = {
@@ -37,6 +38,9 @@ def schedule_alteration_pickup(
 
     if order_id is not None:
         payload["order_id"] = order_id
+
+    if address_id is not None:
+        payload["address_id"] = address_id
 
     cleaned_notes = (notes or "").strip()
     if cleaned_notes:

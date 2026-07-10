@@ -26,6 +26,7 @@ from crm.cancel_order import cancel_current_order
 from crm.fabric_delivery import create_fabric_delivery_request
 from crm.fabric_alert import raise_fabric_alert
 from crm.bulk_order import create_bulk_order_enquiry
+from crm.delivered_orders import fetch_delivered_orders
 from crm.human_handover import request_human_handover
 from crm.order_change_request import create_order_change_request, list_order_change_requests
 from crm.order_status import fetch_current_order_status
@@ -380,6 +381,9 @@ def clear_pickup_flow(session: Any) -> None:
     session.pending_pickup_address_id = None
     session.pending_address_ordered_ids = []
     session.pickup_mode = None
+    session.awaiting_alteration_order = False
+    session.pending_alteration_order_ids = []
+    session.pending_alteration_order_id = None
 
 
 def clear_order_change_flow(session: Any) -> None:
@@ -805,6 +809,85 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             )
         ]
 
+    if existing_session.awaiting_alteration_order:
+        choice_text = normalize_mobile(message.text or "")
+        if not choice_text:
+            return [
+                OutgoingMessage(
+                    text=with_footer("Please enter a valid number from the recent delivered orders list above."),
+                    reply_markup=build_nav_keyboard(),
+                )
+            ]
+
+        choice_index = int(choice_text) - 1
+        if not (0 <= choice_index < len(existing_session.pending_alteration_order_ids)):
+            return [
+                OutgoingMessage(
+                    text=with_footer("Invalid choice. Please reply with a number from the recent delivered orders list above."),
+                    reply_markup=build_nav_keyboard(),
+                )
+            ]
+
+        order_id = existing_session.pending_alteration_order_ids[choice_index]
+        existing_session.pending_alteration_order_id = order_id
+        existing_session.awaiting_alteration_order = False
+
+        mobile_for_pickup = derive_mobile_from_message(message, existing_mobile)
+        if not mobile_for_pickup:
+            clear_pickup_flow(existing_session)
+            return [
+                OutgoingMessage(
+                    text=with_footer("I could not identify your mobile number for this request. Please share contact or send your mobile number."),
+                    reply_markup=build_menu_reply_markup(client_type),
+                )
+            ]
+
+        address_result = fetch_client_addresses(mobile_for_pickup)
+        if not address_result.success or not address_result.addresses:
+            existing_session.address_needed_for_pickup = True
+            clear_address_update_flow(existing_session)
+            existing_session.awaiting_address_action = True
+            return [
+                OutgoingMessage(
+                    text=(
+                        "No saved addresses found. Please add a delivery/pickup address first "
+                        "so we can schedule the alteration pickup.\n\n"
+                        "Please reply 1 to add a new address."
+                    ),
+                ),
+                OutgoingMessage(
+                    text=with_footer(build_address_list_message(mobile_for_pickup)),
+                ),
+            ]
+
+        existing_session.awaiting_pickup_address = True
+        existing_session.pending_address_ordered_ids = [a.address_id for a in address_result.addresses]
+
+        address_lines: list[str] = []
+        if address_result.customer_name:
+            address_lines.append(f"Saved addresses for {address_result.customer_name}:")
+        else:
+            address_lines.append("Saved addresses:")
+        address_lines.append("")
+
+        for index, address in enumerate(address_result.addresses, start=1):
+            main_tag = " (Main)" if address.is_main else ""
+            location_parts = [part for part in [address.address1, address.city, address.pincode] if part]
+            address_lines.append(f"{index}. {', '.join(location_parts)}{main_tag}")
+
+        address_lines.extend([
+            "",
+            "Reply with the number of the address you'd like to use for this pickup,",
+            "or reply 'add' to add a new address.",
+        ])
+
+        return [
+            OutgoingMessage(
+                text=with_footer("\n".join(address_lines)),
+                reply_markup=build_nav_keyboard(),
+            )
+        ]
+
     if existing_session.awaiting_alteration_pickup_notes:
         mobile_for_pickup = derive_mobile_from_message(message, existing_mobile)
         pickup_date = existing_session.pending_pickup_date
@@ -827,8 +910,26 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             mobile=mobile_for_pickup,
             pickup_date=pickup_date,
             pickup_time=pickup_time,
+            order_id=existing_session.pending_alteration_order_id,
+            address_id=existing_session.pending_pickup_address_id,
             notes=notes,
         )
+
+        if alteration_result.success:
+            # An alteration pickup order was placed, so transition the customer
+            # to the active_client menu (mirrors fresh pickup behaviour).
+            save_client_profile(
+                message.user_id,
+                mobile_for_pickup,
+                "active_client",
+                existing_customer_salutation,
+            )
+            _, _, updated_salutation = get_client_profile(message.user_id)
+            return [
+                OutgoingMessage(text=alteration_result.message),
+                build_main_menu_response(message.user_id, "active_client", updated_salutation),
+            ]
+
         return [
             OutgoingMessage(
                 text=with_footer(alteration_result.message),
@@ -1570,6 +1671,50 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                 OutgoingMessage(
                     text=f"{bulk_result.message}\n{handover_result.message}",
                     reply_markup=build_menu_reply_markup(client_type),
+                )
+            ]
+
+        if selected_intent == "alteration_pickup_recent":
+            clear_pickup_flow(existing_session)
+            existing_session.pickup_mode = "alteration"
+
+            mobile_for_alteration = derive_mobile_from_message(message, mobile)
+            if not mobile_for_alteration:
+                return [
+                    OutgoingMessage(
+                        text=with_footer("I could not identify your mobile number for this request. Please share contact or send your mobile number."),
+                        reply_markup=build_menu_reply_markup(client_type),
+                    )
+                ]
+
+            delivered_result = fetch_delivered_orders(mobile_for_alteration)
+            if not delivered_result.success or not delivered_result.orders:
+                return [
+                    OutgoingMessage(
+                        text=with_footer(delivered_result.message),
+                        reply_markup=build_menu_reply_markup(client_type),
+                    )
+                ]
+
+            existing_session.awaiting_alteration_order = True
+            existing_session.pending_alteration_order_ids = [order.order_id for order in delivered_result.orders]
+
+            order_lines: list[str] = ["Here are your recently delivered orders (last 30 days):", ""]
+            for index, order in enumerate(delivered_result.orders, start=1):
+                line = f"{index}. Order #{order.order_id} — delivered {order.delivered_date}"
+                if order.item_summary:
+                    line += f" ({order.item_summary})"
+                order_lines.append(line)
+
+            order_lines.extend([
+                "",
+                "Reply with the number of the order you'd like to schedule an alteration pickup for.",
+            ])
+
+            return [
+                OutgoingMessage(
+                    text=with_footer("\n".join(order_lines)),
+                    reply_markup=build_nav_keyboard(),
                 )
             ]
 
