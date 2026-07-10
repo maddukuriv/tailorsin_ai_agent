@@ -63,8 +63,15 @@ async def fetch_current_order_status(mobile: str) -> CurrentOrderStatusResult:
 	client_payload = payload.get("client") if isinstance(payload.get("client"), dict) else {}
 	customer_name = _clean(client_payload.get("cname")) or None
 
-	order_payload = payload.get("data") if isinstance(payload.get("data"), dict) else None
-	if order_payload is None:
+	orders = payload.get("orders") if isinstance(payload.get("orders"), list) else []
+	# Find the first non-cancelled order (stage != 8 means not cancelled)
+	current_order_payload = None
+	for order_item in orders:
+		if isinstance(order_item, dict) and str(order_item.get("stage", "")).strip() != "8":
+			current_order_payload = order_item
+			break
+
+	if current_order_payload is None:
 		return CurrentOrderStatusResult(
 			success=True,
 			message=str(payload.get("message") or "No current open order found."),
@@ -72,13 +79,13 @@ async def fetch_current_order_status(mobile: str) -> CurrentOrderStatusResult:
 			order=None,
 		)
 
-	pickup_time_raw = _clean(order_payload.get("pickup_time"))
+	pickup_time_raw = _clean(current_order_payload.get("pickup_time"))
 	order = CurrentOrderDetails(
-		order_id=str(order_payload.get("order_id") or ""),
-		stage_label=_clean(order_payload.get("stage_label")) or "Unknown",
-		order_date=_clean(order_payload.get("order_date")),
-		last_update_date=_clean(order_payload.get("last_update_date")),
-		pickup_date=_clean(order_payload.get("pickup_date")) or None,
+		order_id=str(current_order_payload.get("order_id") or ""),
+		stage_label=_clean(current_order_payload.get("stage_label")) or "Unknown",
+		order_date=_clean(current_order_payload.get("order_date")),
+		last_update_date=_clean(current_order_payload.get("last_update_date")),
+		pickup_date=_clean(current_order_payload.get("pickup_date")) or None,
 		pickup_time=_pickup_time_label(pickup_time_raw),
 	)
 
