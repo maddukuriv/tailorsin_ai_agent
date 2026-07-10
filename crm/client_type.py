@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 import logging
 
-import requests
+from services.http_client import http_get
 
 BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/getclient"
 logger = logging.getLogger(__name__)
@@ -44,14 +44,13 @@ def _build_customer_salutation(data: dict) -> str | None:
     return full_name or salutation
 
 
-def lookup_customer_profile(mobile: str) -> CustomerProfile:
+async def lookup_customer_profile(mobile: str) -> CustomerProfile:
 
     try:
 
-        response = requests.get(
+        response = await http_get(
             BASE_URL,
             params={"mobile": mobile},
-            timeout=10
         )
 
         logger.info(
@@ -96,5 +95,5 @@ def lookup_customer_profile(mobile: str) -> CustomerProfile:
         return CustomerProfile(client_type="new_user")
 
 
-def get_client_type(mobile: str):
-    return lookup_customer_profile(mobile).client_type
+async def get_client_type(mobile: str):
+    return (await lookup_customer_profile(mobile)).client_type

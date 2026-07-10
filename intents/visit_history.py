@@ -1,8 +1,8 @@
 from crm.book_appointment import fetch_appointment_history
 
 
-def build_visit_history_response(mobile: str) -> str:
-    history = fetch_appointment_history(mobile)
+async def build_visit_history_response(mobile: str) -> str:
+    history = await fetch_appointment_history(mobile)
     if not history.success:
         return history.message
 

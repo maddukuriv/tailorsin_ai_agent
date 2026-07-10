@@ -8,8 +8,8 @@ def _labelize(field_name: str) -> str:
     return field_name.replace("_", " ").strip().title()
 
 
-def build_measurements_response(mobile: str) -> str:
-    result = fetch_client_measurements(mobile)
+async def build_measurements_response(mobile: str) -> str:
+    result = await fetch_client_measurements(mobile)
     if not result.success:
         return result.message
 

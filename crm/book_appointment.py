@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-import requests
+from services.http_client import http_get, http_post
 
 
 BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/bookappointment.php"
@@ -70,10 +70,9 @@ def _extract_slot(entry: object) -> str | None:
     return None
 
 
-def fetch_available_visit_slots(bookdate: str, store_id: int = DEFAULT_STORE_ID) -> VisitAvailabilityResult:
+async def fetch_available_visit_slots(bookdate: str, store_id: int = DEFAULT_STORE_ID) -> VisitAvailabilityResult:
     try:
-        response = requests.get(BASE_URL, params={"date": bookdate, "store_id": store_id}, timeout=20)
-        response.raise_for_status()
+        response = await http_get(BASE_URL, params={"date": bookdate, "store_id": store_id})
         payload = response.json() if response.content else {}
     except Exception:
         return VisitAvailabilityResult(
@@ -118,7 +117,7 @@ def fetch_available_visit_slots(bookdate: str, store_id: int = DEFAULT_STORE_ID)
     return VisitAvailabilityResult(success=True, message="Slots fetched successfully.", slots=slots)
 
 
-def book_store_visit(
+async def book_store_visit(
     mobile: str,
     bookdate: str,
     booktime: str,
@@ -132,7 +131,7 @@ def book_store_visit(
     }
 
     try:
-        response = requests.post(BASE_URL, json=payload, timeout=20)
+        response = await http_post(BASE_URL, json_body=payload)
         payload = response.json() if response.content else {}
     except Exception:
         return BookVisitResult(
@@ -154,10 +153,9 @@ def book_store_visit(
     )
 
 
-def fetch_appointment_history(mobile: str) -> AppointmentHistoryResult:
+async def fetch_appointment_history(mobile: str) -> AppointmentHistoryResult:
     try:
-        response = requests.get(BASE_URL, params={"mobile": mobile}, timeout=20)
-        response.raise_for_status()
+        response = await http_get(BASE_URL, params={"mobile": mobile})
         payload = response.json() if response.content else {}
     except Exception:
         return AppointmentHistoryResult(

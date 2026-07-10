@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-import requests
+from services.http_client import http_get
 
 
 BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/deliveredorders.php"
@@ -61,13 +61,13 @@ def _build_item_summary(item: dict) -> str:
     return " | ".join(parts)
 
 
-def fetch_delivered_orders(mobile: str, window_days: int = DEFAULT_WINDOW_DAYS) -> DeliveredOrdersResult:
+async def fetch_delivered_orders(mobile: str, window_days: int = DEFAULT_WINDOW_DAYS) -> DeliveredOrdersResult:
     """Fetch recent delivered orders for a mobile number.
 
     Only orders delivered within the last ``window_days`` days are returned.
     """
     try:
-        response = requests.get(BASE_URL, params={"mobile": mobile}, timeout=20)
+        response = await http_get(BASE_URL, params={"mobile": mobile})
         data = response.json() if response.content else {}
     except Exception:
         return DeliveredOrdersResult(

@@ -6,11 +6,10 @@ from typing import Any
 
 from conversation.intent_router import get_intent
 from conversation.menu import FOOTER_TEXT, format_menu_message_with_greeting, get_menu_keyboard
+from conversation.session import get_session, reset_session
 from conversation.state_manager import (
     get_client_profile,
-    get_session,
     mark_awaiting_contact,
-    reset_session,
     save_client_profile,
 )
 from crm.alteration_pickup import schedule_alteration_pickup
@@ -89,7 +88,7 @@ class OutgoingMessage:
     reply_markup: dict[str, Any] | None = None
 
 
-def build_intent_response(intent_name: str, client_type: str) -> list[OutgoingMessage] | None:
+async def build_intent_response(intent_name: str, client_type: str) -> list[OutgoingMessage] | None:
     if intent_name == "about":
         return [
             OutgoingMessage(
@@ -101,7 +100,7 @@ def build_intent_response(intent_name: str, client_type: str) -> list[OutgoingMe
     if intent_name == "browse":
         return [
             OutgoingMessage(
-                text=build_browse_response(),
+                text=await build_browse_response(),
                 reply_markup=build_menu_reply_markup(client_type),
             )
         ]
@@ -133,7 +132,7 @@ def build_intent_response(intent_name: str, client_type: str) -> list[OutgoingMe
     if intent_name == "pricing":
         return [
             OutgoingMessage(
-                text=build_pricing_response(client_type),
+                text=await build_pricing_response(client_type),
                 reply_markup=build_menu_reply_markup(client_type),
             )
         ]
@@ -156,7 +155,7 @@ def extract_mobile_from_text(text: str) -> str | None:
     return None
 
 
-def resolve_mobile(
+async def resolve_mobile(
     text: str,
     contact_phone: str | None,
     fallback_mobile: str | None = None,
@@ -200,13 +199,13 @@ def is_onboarding_trigger(message: IncomingMessage) -> bool:
     return normalized_text in {"hi", "hello", "menu", "main menu", "start"}
 
 
-def resolve_client_type(
+async def resolve_client_type(
     text: str,
     contact_phone: str | None,
     fallback_mobile: str | None = None,
 ) -> tuple[str | None, str, str | None]:
-    mobile = resolve_mobile(text, contact_phone, fallback_mobile)
-    customer_profile = lookup_customer_profile(mobile or "")
+    mobile = await resolve_mobile(text, contact_phone, fallback_mobile)
+    customer_profile = await lookup_customer_profile(mobile or "")
     return mobile, customer_profile.client_type, customer_profile.customer_salutation
 
 
@@ -396,8 +395,8 @@ def clear_order_cancel_flow(session: Any) -> None:
     session.awaiting_order_cancel_reason = False
 
 
-def build_address_list_message(mobile: str) -> str:
-    result = fetch_client_addresses(mobile)
+async def build_address_list_message(mobile: str) -> str:
+    result = await fetch_client_addresses(mobile)
     if not result.success:
         return result.message
 
@@ -436,8 +435,8 @@ ORDER_CHANGE_TYPE_MAP = {
 }
 
 
-def build_order_change_intro_message(mobile: str) -> str:
-    result = list_order_change_requests(mobile)
+async def build_order_change_intro_message(mobile: str) -> str:
+    result = await list_order_change_requests(mobile)
     lines: list[str] = []
 
     if result.success and result.requests:
@@ -480,12 +479,12 @@ def send_main_menu(
     )
 
 
-def build_main_menu_response(
+async def build_main_menu_response(
     user_id: int,
     client_type: str,
     customer_salutation: str | None,
 ) -> OutgoingMessage:
-    session = get_session(user_id)
+    session = await get_session(user_id)
     is_repeat = client_type in RETURNING_CLIENT_TYPES and session.has_seen_known_customer_menu
 
     if client_type in RETURNING_CLIENT_TYPES:
@@ -494,16 +493,16 @@ def build_main_menu_response(
     return send_main_menu(client_type, customer_salutation, is_repeat)
 
 
-def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
+async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
     now = time.time()
-    existing_session = get_session(message.user_id)
+    existing_session = await get_session(message.user_id)
 
     if now - existing_session.last_activity_at > SESSION_TIMEOUT_SECONDS:
-        reset_session(message.user_id)
-        existing_session = get_session(message.user_id)
+        await reset_session(message.user_id)
+        existing_session = await get_session(message.user_id)
 
     existing_session.last_activity_at = now
-    existing_mobile, existing_client_type, existing_customer_salutation = get_client_profile(message.user_id)
+    existing_mobile, existing_client_type, existing_customer_salutation = await get_client_profile(message.user_id)
     auto_mobile = derive_mobile_from_message(message, existing_mobile)
 
     logger.info(
@@ -518,7 +517,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
 
     if is_telegram_message(message) and not existing_mobile and not message.contact_phone:
         if existing_session.awaiting_contact or is_onboarding_trigger(message):
-            mark_awaiting_contact(message.user_id)
+            await mark_awaiting_contact(message.user_id)
             logger.info("onboarding_request_contact user_id=%s", message.user_id)
             return [
                 OutgoingMessage(
@@ -529,32 +528,34 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
 
     if message.is_start_command:
         has_seen_known_customer_menu = existing_session.has_seen_known_customer_menu
-        reset_session(message.user_id)
-        reset_session(message.user_id).has_seen_known_customer_menu = has_seen_known_customer_menu
-        mobile, client_type, customer_salutation = resolve_client_type(
+        await reset_session(message.user_id)
+        existing_session = await get_session(message.user_id)
+        existing_session.has_seen_known_customer_menu = has_seen_known_customer_menu
+        await save_session(existing_session)
+        mobile, client_type, customer_salutation = await resolve_client_type(
             message.text,
             message.contact_phone,
             auto_mobile,
         )
-        save_client_profile(message.user_id, mobile, client_type, customer_salutation)
+        await save_client_profile(message.user_id, mobile, client_type, customer_salutation)
         logger.info(
             "start_flow user_id=%s resolved_client_type=%s mobile_present=%s",
             message.user_id,
             client_type,
             bool(mobile),
         )
-        return [build_main_menu_response(message.user_id, client_type, customer_salutation)]
+        return [await build_main_menu_response(message.user_id, client_type, customer_salutation)]
 
     # --- Early navigation interceptor: allow escape from any sub-flow ---
     if message.text:
         normalized_text = (message.text or "").strip().casefold()
         if normalized_text in {"0", "menu", "main menu"}:
             clear_all_flows(existing_session)
-            mobile, client_type, customer_salutation = resolve_client_type(
+            mobile, client_type, customer_salutation = await resolve_client_type(
                 message.text, message.contact_phone, auto_mobile or existing_mobile,
             )
-            save_client_profile(message.user_id, mobile, client_type, customer_salutation)
-            return [build_main_menu_response(message.user_id, client_type, customer_salutation)]
+            await save_client_profile(message.user_id, mobile, client_type, customer_salutation)
+            return [await build_main_menu_response(message.user_id, client_type, customer_salutation)]
 
         if normalized_text in {"9", "handover"}:
             clear_all_flows(existing_session)
@@ -568,7 +569,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                         reply_markup=build_contact_keyboard(),
                     )
                 ]
-            handover_result = request_human_handover(mobile_for_handover)
+            handover_result = await request_human_handover(mobile_for_handover)
             return [OutgoingMessage(text=handover_result.message)]
     # --- End early navigation interceptor ---
 
@@ -586,7 +587,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                 )
             ]
 
-        registration_result = register_new_client(mobile_for_registration, registration_name)
+        registration_result = await register_new_client(mobile_for_registration, registration_name)
         existing_session.awaiting_registration_name = False
 
         logger.info(
@@ -597,17 +598,17 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         )
 
         if registration_result.success:
-            mobile, client_type, customer_salutation = resolve_client_type(
+            mobile, client_type, customer_salutation = await resolve_client_type(
                 message.text,
                 message.contact_phone,
                 mobile_for_registration,
             )
-            save_client_profile(message.user_id, mobile, client_type, customer_salutation)
+            await save_client_profile(message.user_id, mobile, client_type, customer_salutation)
             return [
                 OutgoingMessage(
                     text=f"{registration_result.message}\nRegistration complete. Showing your client menu now.",
                 ),
-                build_main_menu_response(message.user_id, client_type, customer_salutation),
+                await build_main_menu_response(message.user_id, client_type, customer_salutation),
             ]
 
         return [
@@ -691,7 +692,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         schedule_func = schedule_another_pickup if pickup_mode == "another" else schedule_fresh_pickup
 
         # If no address_id, try scheduling without it (API will return needs_address if required)
-        schedule_result = schedule_func(mobile_for_pickup, pickup_date, pickup_time, address_id=address_id)
+        schedule_result = await schedule_func(mobile_for_pickup, pickup_date, pickup_time, address_id=address_id)
         clear_pickup_flow(existing_session)
 
         if schedule_result.needs_address:
@@ -710,23 +711,23 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                     ),
                 ),
                 OutgoingMessage(
-                    text=build_address_list_message(mobile_for_address),
+                    text=await build_address_list_message(mobile_for_address),
                 ),
             ]
 
         if schedule_result.success:
             # Fresh pickup creates an active order, so switch menu context immediately.
-            save_client_profile(
+            await save_client_profile(
                 message.user_id,
                 mobile_for_pickup,
                 "active_client",
                 existing_customer_salutation,
             )
             # Retrieve updated profile to ensure we have the latest salutation
-            _, _, updated_salutation = get_client_profile(message.user_id)
+            _, _, updated_salutation = await get_client_profile(message.user_id)
             return [
                 OutgoingMessage(text=schedule_result.message),
-                build_main_menu_response(message.user_id, "active_client", updated_salutation),
+                await build_main_menu_response(message.user_id, "active_client", updated_salutation),
             ]
 
         if schedule_result.conflict_open_order:
@@ -765,7 +766,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                     ),
                 ),
                 OutgoingMessage(
-                    text=with_footer(build_address_list_message(mobile_for_address) if mobile_for_address else "Please share your mobile number first."),
+                    text=with_footer(await build_address_list_message(mobile_for_address) if mobile_for_address else "Please share your mobile number first."),
                 ),
             ]
 
@@ -842,7 +843,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                 )
             ]
 
-        address_result = fetch_client_addresses(mobile_for_pickup)
+        address_result = await fetch_client_addresses(mobile_for_pickup)
         if not address_result.success or not address_result.addresses:
             existing_session.address_needed_for_pickup = True
             clear_address_update_flow(existing_session)
@@ -856,7 +857,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                     ),
                 ),
                 OutgoingMessage(
-                    text=with_footer(build_address_list_message(mobile_for_pickup)),
+                    text=with_footer(await build_address_list_message(mobile_for_pickup)),
                 ),
             ]
 
@@ -906,7 +907,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                 )
             ]
 
-        alteration_result = schedule_alteration_pickup(
+        alteration_result = await schedule_alteration_pickup(
             mobile=mobile_for_pickup,
             pickup_date=pickup_date,
             pickup_time=pickup_time,
@@ -918,16 +919,16 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if alteration_result.success:
             # An alteration pickup order was placed, so transition the customer
             # to the active_client menu (mirrors fresh pickup behaviour).
-            save_client_profile(
+            await save_client_profile(
                 message.user_id,
                 mobile_for_pickup,
                 "active_client",
                 existing_customer_salutation,
             )
-            _, _, updated_salutation = get_client_profile(message.user_id)
+            _, _, updated_salutation = await get_client_profile(message.user_id)
             return [
                 OutgoingMessage(text=alteration_result.message),
-                build_main_menu_response(message.user_id, "active_client", updated_salutation),
+                await build_main_menu_response(message.user_id, "active_client", updated_salutation),
             ]
 
         return [
@@ -952,7 +953,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                 )
             ]
 
-        availability_result = fetch_available_visit_slots(visit_date)
+        availability_result = await fetch_available_visit_slots(visit_date)
         if not availability_result.success:
             return [
                 OutgoingMessage(
@@ -1002,11 +1003,11 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                 )
             ]
 
-        book_result = book_store_visit(visit_mobile, visit_date, selected_slot)
+        book_result = await book_store_visit(visit_mobile, visit_date, selected_slot)
         if book_result.success:
             return [
                 OutgoingMessage(text=book_result.message),
-                build_main_menu_response(message.user_id, existing_client_type or "client", existing_customer_salutation),
+                await build_main_menu_response(message.user_id, existing_client_type or "client", existing_customer_salutation),
             ]
 
         return [
@@ -1032,8 +1033,8 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if notes.casefold() in {"skip", "no", "none"}:
             notes = ""
 
-        fabric_delivery_result = create_fabric_delivery_request(mobile_for_fabric_delivery, notes=notes)
-        handover_result = request_human_handover(mobile_for_fabric_delivery)
+        fabric_delivery_result = await create_fabric_delivery_request(mobile_for_fabric_delivery, notes=notes)
+        handover_result = await request_human_handover(mobile_for_fabric_delivery)
         return [
             OutgoingMessage(
                 text=with_footer(f"{fabric_delivery_result.message}\n{handover_result.message}"),
@@ -1091,7 +1092,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                 )
             ]
 
-        delete_result = delete_client_address(mobile_for_address, address_id)
+        delete_result = await delete_client_address(mobile_for_address, address_id)
         return [
             OutgoingMessage(
                 text=with_footer(delete_result.message),
@@ -1137,11 +1138,11 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                 )
             ]
 
-        add_result = add_client_address(mobile_for_address, address_line, city, pincode)
+        add_result = await add_client_address(mobile_for_address, address_line, city, pincode)
 
         # If this address was added as part of the pickup flow, continue the pickup
         if add_result.success and existing_session.pickup_mode is not None:
-            recheck = fetch_client_addresses(mobile_for_address)
+            recheck = await fetch_client_addresses(mobile_for_address)
             pickup_date = existing_session.pending_pickup_date
             pickup_time = existing_session.pending_pickup_time
 
@@ -1149,22 +1150,22 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             if recheck.success and len(recheck.addresses) >= 1 and pickup_date and pickup_time is not None:
                 chosen_address_id = recheck.addresses[0].address_id
                 retry_schedule_func = schedule_another_pickup if existing_session.pickup_mode == "another" else schedule_fresh_pickup
-                retry_result = retry_schedule_func(
+                retry_result = await retry_schedule_func(
                     mobile_for_address, pickup_date, pickup_time, address_id=chosen_address_id,
                 )
                 clear_pickup_flow(existing_session)
                 if retry_result.success:
-                    save_client_profile(
+                    await save_client_profile(
                         message.user_id,
                         mobile_for_address,
                         "active_client",
                         existing_customer_salutation,
                     )
-                    _, _, updated_salutation = get_client_profile(message.user_id)
+                    _, _, updated_salutation = await get_client_profile(message.user_id)
                     return [
                         OutgoingMessage(text=add_result.message),
                         OutgoingMessage(text=retry_result.message),
-                        build_main_menu_response(message.user_id, "active_client", updated_salutation),
+                        await build_main_menu_response(message.user_id, "active_client", updated_salutation),
                     ]
                 if retry_result.needs_address:
                     # Still no usable address — ask to add again
@@ -1299,7 +1300,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                 )
             ]
 
-        update_result = update_client_address(
+        update_result = await update_client_address(
             mobile_for_address,
             address_id=address_id,
             address1=address_line,
@@ -1352,12 +1353,12 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                 )
             ]
 
-        create_result = create_order_change_request(
+        create_result = await create_order_change_request(
             mobile=mobile_for_change,
             request_type=request_type,
             details=details,
         )
-        handover_result = request_human_handover(mobile_for_change)
+        handover_result = await request_human_handover(mobile_for_change)
         return [
             OutgoingMessage(
                 text=with_footer(f"{create_result.message}\n{handover_result.message}"),
@@ -1381,11 +1382,11 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                 )
             ]
 
-        status_result = fetch_current_order_status(mobile_for_cancel)
+        status_result = await fetch_current_order_status(mobile_for_cancel)
         order_id = status_result.order.order_id if status_result.success and status_result.order else None
         order_id_int = int(order_id) if isinstance(order_id, str) and order_id.isdigit() else None
 
-        cancel_result = cancel_current_order(
+        cancel_result = await cancel_current_order(
             mobile=mobile_for_cancel,
             order_id=order_id_int,
             reason=reason,
@@ -1394,16 +1395,16 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if cancel_result.success:
             # The active order is gone, so the customer is no longer an
             # active_client. Transition them back to the regular client menu.
-            save_client_profile(
+            await save_client_profile(
                 message.user_id,
                 mobile_for_cancel,
                 "client",
                 existing_customer_salutation,
             )
-            _, _, updated_salutation = get_client_profile(message.user_id)
+            _, _, updated_salutation = await get_client_profile(message.user_id)
             return [
                 OutgoingMessage(text=cancel_result.message),
-                build_main_menu_response(message.user_id, "client", updated_salutation),
+                await build_main_menu_response(message.user_id, "client", updated_salutation),
             ]
 
         return [
@@ -1415,9 +1416,9 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
 
     mobile_from_text = extract_mobile_from_text(message.text) if message.text else None
     if mobile_from_text:
-        mobile, client_type, customer_salutation = resolve_client_type(message.text, message.contact_phone, auto_mobile)
-        save_client_profile(message.user_id, mobile, client_type, customer_salutation)
-        return [build_main_menu_response(message.user_id, client_type, customer_salutation)]
+        mobile, client_type, customer_salutation = await resolve_client_type(message.text, message.contact_phone, auto_mobile)
+        await save_client_profile(message.user_id, mobile, client_type, customer_salutation)
+        return [await build_main_menu_response(message.user_id, client_type, customer_salutation)]
 
     if message.contact_phone:
         if message.contact_user_id not in (None, message.source_user_id):
@@ -1427,26 +1428,26 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if not mobile:
             return [OutgoingMessage(text="I could not read that mobile number. Please try again.")]
 
-        mobile, client_type, customer_salutation = resolve_client_type(message.text, message.contact_phone, auto_mobile)
-        save_client_profile(message.user_id, mobile, client_type, customer_salutation)
+        mobile, client_type, customer_salutation = await resolve_client_type(message.text, message.contact_phone, auto_mobile)
+        await save_client_profile(message.user_id, mobile, client_type, customer_salutation)
         logger.info(
             "onboarding_contact_captured user_id=%s mobile_present=%s client_type=%s",
             message.user_id,
             bool(mobile),
             client_type,
         )
-        return [build_main_menu_response(message.user_id, client_type, customer_salutation)]
+        return [await build_main_menu_response(message.user_id, client_type, customer_salutation)]
 
     mobile, client_type, customer_salutation = existing_mobile, existing_client_type, existing_customer_salutation
     if not mobile or not client_type:
-        mobile, client_type, customer_salutation = resolve_client_type(message.text, message.contact_phone, auto_mobile)
-        save_client_profile(message.user_id, mobile, client_type, customer_salutation)
+        mobile, client_type, customer_salutation = await resolve_client_type(message.text, message.contact_phone, auto_mobile)
+        await save_client_profile(message.user_id, mobile, client_type, customer_salutation)
 
     if message.text in {"menu", "main menu", "10", "0"}:
         if mobile:
-            _, client_type, customer_salutation = resolve_client_type(message.text, message.contact_phone, mobile)
-            save_client_profile(message.user_id, mobile, client_type, customer_salutation)
-        return [build_main_menu_response(message.user_id, client_type, customer_salutation)]
+            _, client_type, customer_salutation = await resolve_client_type(message.text, message.contact_phone, mobile)
+            await save_client_profile(message.user_id, mobile, client_type, customer_salutation)
+        return [await build_main_menu_response(message.user_id, client_type, customer_salutation)]
 
     if message.text:
         selected_intent = get_intent(client_type, message.text)
@@ -1460,13 +1461,13 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if selected_intent is None:
             return [
                 OutgoingMessage(text="Please choose one of the listed menu options."),
-                build_main_menu_response(message.user_id, client_type, customer_salutation),
+                await build_main_menu_response(message.user_id, client_type, customer_salutation),
             ]
 
         if client_type == "new_user" and selected_intent in {"visit", "handover"}:
             mobile_for_registration = derive_mobile_from_message(message, mobile)
             if mobile_for_registration:
-                save_client_profile(message.user_id, mobile_for_registration, client_type, customer_salutation)
+                await save_client_profile(message.user_id, mobile_for_registration, client_type, customer_salutation)
 
             existing_session.awaiting_registration_name = True
             return [
@@ -1479,7 +1480,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
         if selected_intent == "register":
             mobile_for_registration = derive_mobile_from_message(message, mobile)
             if mobile_for_registration:
-                save_client_profile(message.user_id, mobile_for_registration, client_type, customer_salutation)
+                await save_client_profile(message.user_id, mobile_for_registration, client_type, customer_salutation)
 
             existing_session.awaiting_registration_name = True
             return [OutgoingMessage(text=with_footer("Please enter your full name for registration."), reply_markup=build_nav_keyboard())]
@@ -1501,7 +1502,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                     )
                 ]
 
-            address_result = fetch_client_addresses(mobile_for_pickup)
+            address_result = await fetch_client_addresses(mobile_for_pickup)
 
             # Case 1: No saved addresses - redirect to add address
             if not address_result.success or not address_result.addresses:
@@ -1516,7 +1517,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                         ),
                     ),
                     OutgoingMessage(
-                        text=with_footer(build_address_list_message(mobile_for_pickup)),
+                        text=await build_address_list_message(mobile_for_pickup),
                     ),
                 ]
 
@@ -1540,7 +1541,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             address_lines.extend([
                 "",
                 "Reply with the number of the address you'd like to use for this pickup,",
-                "or reply 'add' to add a new address."
+                "or reply 'add' to add a new address.",
             ])
 
             return [
@@ -1579,7 +1580,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
 
             return [
                 OutgoingMessage(
-                    text=build_visit_history_response(mobile_for_history),
+                    text=await build_visit_history_response(mobile_for_history),
                     reply_markup=build_menu_reply_markup(client_type),
                 )
             ]
@@ -1596,7 +1597,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
 
             return [
                 OutgoingMessage(
-                    text=build_order_status_response(mobile_for_order_status),
+                    text=await build_order_status_response(mobile_for_order_status),
                     reply_markup=build_menu_reply_markup(client_type),
                 )
             ]
@@ -1613,7 +1614,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
 
             return [
                 OutgoingMessage(
-                    text=build_measurements_response(mobile_for_measurements),
+                    text=await build_measurements_response(mobile_for_measurements),
                     reply_markup=build_menu_reply_markup(client_type),
                 )
             ]
@@ -1628,8 +1629,8 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                     )
                 ]
 
-            fabric_result = raise_fabric_alert(mobile_for_fabric)
-            handover_result = request_human_handover(mobile_for_fabric)
+            fabric_result = await raise_fabric_alert(mobile_for_fabric)
+            handover_result = await request_human_handover(mobile_for_fabric)
 
             if fabric_result.success and handover_result.success:
                 return [
@@ -1656,8 +1657,8 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                     )
                 ]
 
-            bulk_result = create_bulk_order_enquiry(mobile_for_bulk)
-            handover_result = request_human_handover(mobile_for_bulk)
+            bulk_result = await create_bulk_order_enquiry(mobile_for_bulk)
+            handover_result = await request_human_handover(mobile_for_bulk)
 
             if bulk_result.success and handover_result.success:
                 return [
@@ -1687,7 +1688,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                     )
                 ]
 
-            delivered_result = fetch_delivered_orders(mobile_for_alteration)
+            delivered_result = await fetch_delivered_orders(mobile_for_alteration)
             if not delivered_result.success or not delivered_result.orders:
                 return [
                     OutgoingMessage(
@@ -1728,7 +1729,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                     )
                 ]
 
-            handover_result = request_human_handover(mobile_for_handover)
+            handover_result = await request_human_handover(mobile_for_handover)
             return [
                 OutgoingMessage(
                     text=handover_result.message,
@@ -1761,7 +1762,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
 
             clear_order_change_flow(existing_session)
             existing_session.awaiting_order_change_type = True
-            return [OutgoingMessage(text=with_footer(build_order_change_intro_message(mobile_for_change)), reply_markup=build_nav_keyboard())]
+            return [OutgoingMessage(text=with_footer(await build_order_change_intro_message(mobile_for_change)), reply_markup=build_nav_keyboard())]
 
         if selected_intent == "order_cancel":
             clear_order_cancel_flow(existing_session)
@@ -1784,7 +1785,7 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
                 ]
 
             # Store address IDs in order for numbered reference in delete/update flows
-            address_result = fetch_client_addresses(mobile_for_address)
+            address_result = await fetch_client_addresses(mobile_for_address)
 
             clear_address_update_flow(existing_session)
             existing_session.pending_address_list_ids = (
@@ -1793,12 +1794,12 @@ def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMessage]:
             existing_session.awaiting_address_action = True
             return [
                 OutgoingMessage(
-                    text=with_footer(build_address_list_message(mobile_for_address)),
+                    text=await build_address_list_message(mobile_for_address),
                     reply_markup=build_nav_keyboard(),
                 )
             ]
 
-        intent_response = build_intent_response(selected_intent, client_type)
+        intent_response = await build_intent_response(selected_intent, client_type)
         if intent_response is not None:
             return intent_response
 

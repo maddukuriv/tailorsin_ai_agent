@@ -86,7 +86,7 @@ SEGMENT_MENU_OPTIONS = {
             "intent": "pricing"
         },
         "4": {
-            "label": "How measurement process works",
+            "label": "Measurement process",
             "intent": "measurement"
         },
         "5": {

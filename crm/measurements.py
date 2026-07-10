@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-import requests
+from services.http_client import http_get
 
 
 BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/clientmeasurements.php"
@@ -67,10 +67,9 @@ def _extract_form_records(payload: dict, form_key: str, form_type: str) -> list[
 	return records
 
 
-def fetch_client_measurements(mobile: str) -> ClientMeasurementsResult:
+async def fetch_client_measurements(mobile: str) -> ClientMeasurementsResult:
 	try:
-		response = requests.get(BASE_URL, params={"mobile": mobile}, timeout=20)
-		response.raise_for_status()
+		response = await http_get(BASE_URL, params={"mobile": mobile})
 		payload = response.json() if response.content else {}
 	except Exception:
 		return ClientMeasurementsResult(

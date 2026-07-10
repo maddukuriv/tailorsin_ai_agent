@@ -144,7 +144,7 @@ async def process_wati_update(update: dict[str, Any]) -> dict[str, bool]:
     if incoming_message is None:
         return {"ok": True}
 
-    outgoing_messages = handle_incoming_message(incoming_message)
+    outgoing_messages = await handle_incoming_message(incoming_message)
     for outgoing_message in outgoing_messages:
         await send_wati_message(incoming_message.user_id, outgoing_message)
 

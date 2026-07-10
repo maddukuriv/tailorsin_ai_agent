@@ -6,8 +6,8 @@ BROWSE_INTRO = (
 )
 
 
-def build_browse_response() -> str:
-    catalog = fetch_browse_catalog()
+async def build_browse_response() -> str:
+    catalog = await fetch_browse_catalog()
 
     sections: list[str] = [BROWSE_INTRO.rstrip(), ""]
 

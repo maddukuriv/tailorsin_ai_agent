@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 import logging
 
-import requests
+from services.http_client import http_post
 
 
 BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/schedulepickup.php"
@@ -23,7 +23,7 @@ def _mask_mobile(mobile: str) -> str:
     return f"***{digits_only[-4:]}"
 
 
-def schedule_fresh_pickup(
+async def schedule_fresh_pickup(
     mobile: str,
     pickup_date: str,
     pickup_time: int,
@@ -39,7 +39,7 @@ def schedule_fresh_pickup(
         payload["address_id"] = address_id
 
     try:
-        response = requests.post(BASE_URL, json=payload, timeout=15)
+        response = await http_post(BASE_URL, json_body=payload)
         status_code = response.status_code
 
         logger.info(

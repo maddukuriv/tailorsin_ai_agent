@@ -1,10 +1,6 @@
 fastapi
 uvicorn
-langgraph
-langchain
-langchain-openai
-langchain-groq
-python-dotenv
-python-multipart
 httpx
 redis
+python-dotenv
+python-multipart

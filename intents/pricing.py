@@ -13,9 +13,9 @@ def _resolve_catalog_category(client_type: str) -> int:
     return 6
 
 
-def build_pricing_response(client_type: str) -> str:
+async def build_pricing_response(client_type: str) -> str:
     category_id = _resolve_catalog_category(client_type)
-    catalog = fetch_price_catalog(catid=category_id)
+    catalog = await fetch_price_catalog(catid=category_id)
 
     if not catalog.success:
         return catalog.message

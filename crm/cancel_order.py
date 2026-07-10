@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-import requests
+from services.http_client import http_post
 
 
 BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/cancelorder.php"
@@ -13,7 +13,7 @@ class CancelOrderResult:
     message: str
 
 
-def cancel_current_order(mobile: str, order_id: int | None, reason: str) -> CancelOrderResult:
+async def cancel_current_order(mobile: str, order_id: int | None, reason: str) -> CancelOrderResult:
     cleaned_reason = reason.strip()
     if len(cleaned_reason) > MAX_REASON_LENGTH:
         cleaned_reason = cleaned_reason[:MAX_REASON_LENGTH].rstrip()
@@ -26,7 +26,7 @@ def cancel_current_order(mobile: str, order_id: int | None, reason: str) -> Canc
         payload["order_id"] = order_id
 
     try:
-        response = requests.post(BASE_URL, json=payload, timeout=20)
+        response = await http_post(BASE_URL, json_body=payload)
         data = response.json() if response.content else {}
     except Exception:
         return CancelOrderResult(

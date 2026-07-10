@@ -1,8 +1,8 @@
 from crm.order_status import fetch_current_order_status
 
 
-def build_order_status_response(mobile: str) -> str:
-    result = fetch_current_order_status(mobile)
+async def build_order_status_response(mobile: str) -> str:
+    result = await fetch_current_order_status(mobile)
     if not result.success:
         return result.message
 

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 import logging
 
-import requests
+from services.http_client import http_post
 
 
 BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/addclient.php"
@@ -21,13 +21,13 @@ def _mask_mobile(mobile: str) -> str:
 	return f"***{digits_only[-4:]}"
 
 
-def register_new_client(mobile: str, name: str | None = None) -> RegistrationResult:
+async def register_new_client(mobile: str, name: str | None = None) -> RegistrationResult:
 	try:
 		payload = {"mobile": mobile}
 		if name:
 			payload["cname"] = name
 
-		response = requests.post(BASE_URL, json=payload, timeout=20)
+		response = await http_post(BASE_URL, json_body=payload)
 		data = response.json()
 
 		logger.info(

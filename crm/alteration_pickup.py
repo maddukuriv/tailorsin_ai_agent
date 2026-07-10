@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-import requests
+from services.http_client import http_post
 
 
 BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/alterationpickup.php"
@@ -22,7 +22,7 @@ def _to_int(value: object) -> int | None:
         return None
 
 
-def schedule_alteration_pickup(
+async def schedule_alteration_pickup(
     mobile: str,
     pickup_date: str,
     pickup_time: int,
@@ -49,7 +49,7 @@ def schedule_alteration_pickup(
         payload["notes"] = cleaned_notes
 
     try:
-        response = requests.post(BASE_URL, json=payload, timeout=20)
+        response = await http_post(BASE_URL, json_body=payload)
         data = response.json() if response.content else {}
     except Exception:
         return AlterationPickupResult(

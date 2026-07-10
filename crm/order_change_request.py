@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-import requests
+from services.http_client import http_get, http_post
 
 
 BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/orderchangerequest.php"
@@ -45,9 +45,9 @@ def _to_int(value: object) -> int | None:
         return None
 
 
-def list_order_change_requests(mobile: str) -> OrderChangeRequestListResult:
+async def list_order_change_requests(mobile: str) -> OrderChangeRequestListResult:
     try:
-        response = requests.get(BASE_URL, params={"mobile": mobile}, timeout=20)
+        response = await http_get(BASE_URL, params={"mobile": mobile})
         payload = response.json() if response.content else {}
     except Exception:
         return OrderChangeRequestListResult(
@@ -88,7 +88,7 @@ def list_order_change_requests(mobile: str) -> OrderChangeRequestListResult:
     )
 
 
-def create_order_change_request(
+async def create_order_change_request(
     mobile: str,
     request_type: str,
     details: str,
@@ -107,7 +107,7 @@ def create_order_change_request(
         payload["order_id"] = order_id
 
     try:
-        response = requests.post(BASE_URL, json=payload, timeout=20)
+        response = await http_post(BASE_URL, json_body=payload)
         data = response.json() if response.content else {}
     except Exception:
         return OrderChangeRequestCreateResult(

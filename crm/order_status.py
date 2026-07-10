@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-import requests
+from services.http_client import http_get
 
 
 BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/orderstatus.php"
@@ -40,10 +40,9 @@ def _pickup_time_label(value: str | None) -> str | None:
 	return None
 
 
-def fetch_current_order_status(mobile: str) -> CurrentOrderStatusResult:
+async def fetch_current_order_status(mobile: str) -> CurrentOrderStatusResult:
 	try:
-		response = requests.get(BASE_URL, params={"mobile": mobile}, timeout=20)
-		response.raise_for_status()
+		response = await http_get(BASE_URL, params={"mobile": mobile})
 		payload = response.json() if response.content else {}
 	except Exception:
 		return CurrentOrderStatusResult(

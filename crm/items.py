@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-import requests
+from services.http_client import http_get
 
 
 BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/items"
@@ -29,8 +29,8 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
     return deduped
 
 
-def fetch_browse_catalog() -> BrowseCatalog:
-    response = requests.get(BASE_URL, timeout=20)
+async def fetch_browse_catalog() -> BrowseCatalog:
+    response = await http_get(BASE_URL)
     response.raise_for_status()
 
     payload = response.json()

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-import requests
+from services.http_client import http_get
 
 
 BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/itemswithprice.php"
@@ -46,10 +46,9 @@ def _clean(value: object) -> str:
     return " ".join(value.strip().split())
 
 
-def fetch_price_catalog(catid: int = 6) -> PriceCatalogResult:
+async def fetch_price_catalog(catid: int = 6) -> PriceCatalogResult:
     try:
-        response = requests.get(BASE_URL, params={"catid": catid}, timeout=20)
-        response.raise_for_status()
+        response = await http_get(BASE_URL, params={"catid": catid})
         payload = response.json() if response.content else {}
     except Exception:
         return PriceCatalogResult(

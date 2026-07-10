@@ -12,6 +12,8 @@ class Settings:
     wati_base_url = os.getenv("WATI_BASE_URL", "")
     wati_api_key = os.getenv("WATI_API_KEY", "")
     wati_webhook_secret = os.getenv("WATI_WEBHOOK_SECRET", "")
+    redis_url = os.getenv("REDIS_URL", "")
+    http_timeout = float(os.getenv("HTTP_TIMEOUT", "20"))
 
 
 settings = Settings()

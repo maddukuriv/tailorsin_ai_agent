@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-import requests
+from services.http_client import http_get, http_post
 
 
 BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/clientaddress.php"
@@ -47,10 +47,9 @@ def _to_bool(value: object) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "main"}
 
 
-def fetch_client_addresses(mobile: str) -> AddressListResult:
+async def fetch_client_addresses(mobile: str) -> AddressListResult:
     try:
-        response = requests.get(BASE_URL, params={"mobile": mobile}, timeout=20)
-        response.raise_for_status()
+        response = await http_get(BASE_URL, params={"mobile": mobile})
         payload = response.json() if response.content else {}
     except Exception:
         return AddressListResult(
@@ -105,7 +104,7 @@ def fetch_client_addresses(mobile: str) -> AddressListResult:
     )
 
 
-def add_client_address(mobile: str, address1: str, city: str, pincode: str) -> AddressUpsertResult:
+async def add_client_address(mobile: str, address1: str, city: str, pincode: str) -> AddressUpsertResult:
     payload = {
         "mobile": mobile,
         "action": "add",
@@ -115,7 +114,7 @@ def add_client_address(mobile: str, address1: str, city: str, pincode: str) -> A
     }
 
     try:
-        response = requests.post(BASE_URL, json=payload, timeout=20)
+        response = await http_post(BASE_URL, json_body=payload)
         data = response.json() if response.content else {}
     except Exception:
         return AddressUpsertResult(
@@ -139,7 +138,7 @@ def add_client_address(mobile: str, address1: str, city: str, pincode: str) -> A
 DELETE_BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/deleteaddress.php"
 
 
-def delete_client_address(mobile: str, address_id: int) -> AddressUpsertResult:
+async def delete_client_address(mobile: str, address_id: int) -> AddressUpsertResult:
     payload = {
         "mobile": mobile,
         "action": "delete",
@@ -147,7 +146,7 @@ def delete_client_address(mobile: str, address_id: int) -> AddressUpsertResult:
     }
 
     try:
-        response = requests.post(DELETE_BASE_URL, json=payload, timeout=20)
+        response = await http_post(DELETE_BASE_URL, json_body=payload)
         data = response.json() if response.content else {}
     except Exception:
         return AddressUpsertResult(
@@ -167,7 +166,7 @@ def delete_client_address(mobile: str, address_id: int) -> AddressUpsertResult:
     )
 
 
-def update_client_address(
+async def update_client_address(
     mobile: str,
     address_id: int,
     address1: str | None = None,
@@ -187,7 +186,7 @@ def update_client_address(
         payload["set_main"] = 1
 
     try:
-        response = requests.post(BASE_URL, json=payload, timeout=20)
+        response = await http_post(BASE_URL, json_body=payload)
         data = response.json() if response.content else {}
     except Exception:
         return AddressUpsertResult(

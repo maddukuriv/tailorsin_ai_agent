@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-import requests
+from services.http_client import http_post
 
 
 BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/fabricalert.php"
@@ -13,11 +13,11 @@ class FabricAlertResult:
     alert_id: int | None = None
 
 
-def raise_fabric_alert(mobile: str) -> FabricAlertResult:
+async def raise_fabric_alert(mobile: str) -> FabricAlertResult:
     payload = {"mobile": mobile}
 
     try:
-        response = requests.post(BASE_URL, json=payload, timeout=20)
+        response = await http_post(BASE_URL, json_body=payload)
         data = response.json() if response.content else {}
     except Exception:
         return FabricAlertResult(
