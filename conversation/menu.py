@@ -2,110 +2,107 @@ SEGMENT_MENU_OPTIONS = {
 
     "active_client": {
         "1": {
-            "label": "Track my current order",
+            "label": "Track my order",
             "intent": "order_status"
         },
         "2": {
+            "label": "Modify my order",
+            "intent": "order_changes"
+        },
+        "3": {
+            "label": "Cancel my order",
+            "intent": "order_cancel"
+        },
+        "4": {
+            "label": "Report an issue / Pickup alteration",
+            "intent": "alteration_pickup_recent"
+        },
+        "5": {
+            "label": "Book a store visit",
+            "intent": "book_visit"
+        },
+        "6": {
             "label": "Place a new order / Schedule a pickup",
             "intent": "new_order"
         },
-        "3": {
-            "label": "Modify my current order",
-            "intent": "order_changes"
-        },
-        "4": {
-            "label": "Cancel my current order",
-            "intent": "order_cancel"
-        },
-        "5": {
-            "label": "Recent order issues / Alteration pickup",
-            "intent": "alteration_pickup_recent"
-        },
-        "6": {
-            "label": "Book a visit",
-            "intent": "book_visit"
-        },
         "7": {
-            "label": "Fabric requirement & price estimate",
+            "label": "Estimate fabric & price",
             "intent": "fabric_estimate"
         },
         "8": {
-            "label": "Price catalogue",
+            "label": "View price catalogue",
             "intent": "pricing"
         }
-
     },
 
     "client": {
         "1": {
-            "label": "Place a new order / Schedule a pickup",
+            "label": "Place an order / Schedule a pickup",
             "intent": "new_order"
         },
         "2": {
-            "label": "Price catalogue",
-            "intent": "pricing"
-        },
-        "3": {
-            "label": "Book a visit",
+            "label": "Book a store visit",
             "intent": "book_visit"
         },
-        "4": {
-            "label": "Fabric requirement & price estimate",
-            "intent": "fabric_estimate"
-        },
-        "5": {
+        "3": {
             "label": "View my measurements",
             "intent": "measurements"
         },
-        "6": {
-            "label": "Recent order issues / Alteration pickup",
-            "intent": "alteration_pickup_recent"
+        "4": {
+            "label": "View price catalogue",
+            "intent": "pricing"
         },
-        "7": {
-            "label": "Send fabric to our store",
+        "5": {
+            "label": "Estimate fabric & price",
+            "intent": "fabric_estimate"
+        },
+        "6": {
+            "label": "Drop off fabric at store",
             "intent": "fabric_delivery"
         },
+        "7": {
+            "label": "Report an issue / Pickup alteration",
+            "intent": "alteration_pickup_recent"
+        },
         "8": {
-            "label": "Update personal details",
+            "label": "Update my address & details",
             "intent": "address_update"
         }
-
     },
 
     "new_user": {
         "1": {
-            "label": "Garments we can stitch",
+            "label": "Browse garments we stitch",
             "intent": "browse"
         },
         "2": {
-            "label": "How tailorsin.com works",
+            "label": "Learn how tailorsin.com works",
             "intent": "about"
         },
         "3": {
-            "label": "Price catalogue",
-            "intent": "pricing"
-        },
-        "4": {
-            "label": "Measurement process",
+            "label": "Learn the measurement process",
             "intent": "measurement"
         },
-        "5": {
-            "label": "Delivery timelines",
+        "4": {
+            "label": "Check delivery timelines",
             "intent": "delivery"
         },
+        "5": {
+            "label": "View price catalogue",
+            "intent": "pricing"
+        },
         "6": {
-            "label": "Service areas",
+            "label": "Check service areas",
             "intent": "service_area"
         },
         "7": {
-            "label": "Book a visit",
-            "intent": "visit"
+            "label": "Book a store visit",
+            "intent": "book_visit"
         },
         "8": {
             "label": "Register & place order",
             "intent": "register"
         }
-
     }
 
 }
@@ -117,7 +114,7 @@ FOOTER_MENU_OPTIONS = {
         "intent": "handover",
     },
     "0": {
-        "label": "Main menu",
+        "label": "Go back to main menu",
         "intent": "main_menu",
     },
 }
