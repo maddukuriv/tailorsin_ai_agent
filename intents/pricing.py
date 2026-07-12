@@ -1,7 +1,4 @@
-from crm.items_with_price import fetch_price_catalog
-
-
-MAX_MESSAGE_LENGTH = 3500
+BASE_CATALOGUE_URL = "https://crm.tailorsin.com/tailorsin-api/api/itemswithprice.php"
 
 
 def _resolve_catalog_category(client_type: str) -> int:
@@ -13,30 +10,22 @@ def _resolve_catalog_category(client_type: str) -> int:
     return 6
 
 
+CATEGORY_LABELS = {
+    1: "Retail 24-25",
+    2: "B2B 24-25",
+    6: "Retail 25-26",
+    7: "B2B 25-26",
+}
+
+
+def _category_label(catid: int) -> str:
+    return CATEGORY_LABELS.get(catid, f"Category {catid}")
+
+
 async def build_pricing_response(client_type: str) -> str:
-    category_id = _resolve_catalog_category(client_type)
-    catalog = await fetch_price_catalog(catid=category_id)
+    catalogue_url = f"{BASE_CATALOGUE_URL}?view=html"
 
-    if not catalog.success:
-        return catalog.message
-
-    lines: list[str] = [
-        f"Price Catalogue ({catalog.category_label})",
-        "",
-    ]
-
-    for item in catalog.items:
-        lines.append(f"{item.item_name}:")
-        for subitem in item.subitems:
-            tax_text = f" + Tax {subitem.tax}%" if subitem.tax else ""
-            lines.append(f"- {subitem.subitem_name}: Rs.{subitem.price}{tax_text}")
-        lines.append("")
-
-    lines.append("Reply with 0 for main menu or 9 to chat with a human agent.")
-    message = "\n".join(lines)
-
-    if len(message) > MAX_MESSAGE_LENGTH:
-        truncated = message[:MAX_MESSAGE_LENGTH].rstrip()
-        return f"{truncated}\n\n...Catalogue is long. Reply with main menu to continue browsing options."
-
-    return message
+    return (
+        "📋 Tap to view our complete Price Catalogue:\n"
+        f"{catalogue_url}"
+    )
