@@ -857,6 +857,8 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
         mobile_for_pickup = derive_mobile_from_message(message, existing_mobile)
         pickup_date = existing_session.pending_pickup_date
         pickup_time = existing_session.pending_pickup_time
+        order_id = existing_session.pending_alteration_order_id
+        address_id = existing_session.pending_pickup_address_id
         notes = (message.text or "").strip()
         if notes.casefold() in {"skip", "no", "none"}:
             notes = ""
@@ -875,8 +877,8 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
             mobile=mobile_for_pickup,
             pickup_date=pickup_date,
             pickup_time=pickup_time,
-            order_id=existing_session.pending_alteration_order_id,
-            address_id=existing_session.pending_pickup_address_id,
+            order_id=order_id,
+            address_id=address_id,
             notes=notes,
         )
 
