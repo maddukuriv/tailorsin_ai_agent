@@ -43,7 +43,6 @@ class SessionState:
     pending_alteration_order_ids: list[int] = field(default_factory=list)
     pending_alteration_order_id: int | None = None
     pending_address_list_ids: list[int] = field(default_factory=list)
-    awaiting_order_change_type: bool = False
     awaiting_order_change_details: bool = False
     awaiting_order_change_select: bool = False
     pending_change_order_id: int | None = None
@@ -52,7 +51,6 @@ class SessionState:
     awaiting_order_cancel_reason: bool = False
     pending_cancel_order_id: int | None = None
     pending_cancel_order_ids: list[int] = field(default_factory=list)
-    pending_order_change_type: str | None = None
     pending_address_line: str | None = None
     pending_address_city: str | None = None
     pending_address_id: int | None = None

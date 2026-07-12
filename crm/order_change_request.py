@@ -1,41 +1,21 @@
 from dataclasses import dataclass
 
-from services.http_client import http_get, http_post
+from services.http_client import http_post
 
 
-BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/orderchangerequest.php"
-MAX_DETAILS_LENGTH = 1000
-
-
-@dataclass
-class OrderChangeRequestItem:
-    request_id: int | None
-    order_id: int | None
-    request_type: str
-    details: str
-    status_label: str
-    created_at: str
+BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/modifyorder.php"
+MAX_COMMENT_LENGTH = 1000
 
 
 @dataclass
-class OrderChangeRequestListResult:
+class ModifyOrderResult:
     success: bool
     message: str
-    requests: list[OrderChangeRequestItem]
-
-
-@dataclass
-class OrderChangeRequestCreateResult:
-    success: bool
-    message: str
-    request_id: int | None = None
     order_id: int | None = None
-
-
-def _clean(value: object) -> str:
-    if not isinstance(value, str):
-        return ""
-    return " ".join(value.strip().split())
+    client_id: int | None = None
+    client_name: str | None = None
+    client_whatsapp: str | None = None
+    comment: str | None = None
 
 
 def _to_int(value: object) -> int | None:
@@ -45,86 +25,48 @@ def _to_int(value: object) -> int | None:
         return None
 
 
-async def list_order_change_requests(mobile: str) -> OrderChangeRequestListResult:
-    try:
-        response = await http_get(BASE_URL, params={"mobile": mobile})
-        payload = response.json() if response.content else {}
-    except Exception:
-        return OrderChangeRequestListResult(
-            success=False,
-            message="Unable to fetch order change requests right now. Please try again shortly.",
-            requests=[],
-        )
-
-    if response.status_code >= 400 or str(payload.get("status", "")).lower() != "success":
-        return OrderChangeRequestListResult(
-            success=False,
-            message=str(payload.get("message") or "Unable to fetch order change requests."),
-            requests=[],
-        )
-
-    request_payload = payload.get("requests") if isinstance(payload.get("requests"), list) else []
-    requests_list: list[OrderChangeRequestItem] = []
-
-    for item in request_payload:
-        if not isinstance(item, dict):
-            continue
-
-        requests_list.append(
-            OrderChangeRequestItem(
-                request_id=_to_int(item.get("id") or item.get("request_id")),
-                order_id=_to_int(item.get("order_id")),
-                request_type=_clean(item.get("request_type")) or "other",
-                details=_clean(item.get("details")),
-                status_label=_clean(item.get("status_label")) or _clean(item.get("status")) or "Pending",
-                created_at=_clean(item.get("created_at")),
-            )
-        )
-
-    return OrderChangeRequestListResult(
-        success=True,
-        message="Order change request history fetched successfully.",
-        requests=requests_list,
-    )
-
-
-async def create_order_change_request(
+async def modify_order(
     mobile: str,
-    request_type: str,
-    details: str,
-    order_id: int | None = None,
-) -> OrderChangeRequestCreateResult:
-    cleaned_details = details.strip()
-    if len(cleaned_details) > MAX_DETAILS_LENGTH:
-        cleaned_details = cleaned_details[:MAX_DETAILS_LENGTH].rstrip()
+    comment: str,
+    order_id: int,
+    chatby: str = "AI Assistant",
+) -> ModifyOrderResult:
+    cleaned_comment = comment.strip()
+    if len(cleaned_comment) > MAX_COMMENT_LENGTH:
+        cleaned_comment = cleaned_comment[:MAX_COMMENT_LENGTH].rstrip()
 
     payload: dict[str, object] = {
         "mobile": mobile,
-        "request_type": request_type,
-        "details": cleaned_details,
+        "comment": cleaned_comment,
+        "order_id": order_id,
+        "chatby": chatby,
     }
-    if order_id is not None:
-        payload["order_id"] = order_id
 
     try:
         response = await http_post(BASE_URL, json_body=payload)
         data = response.json() if response.content else {}
     except Exception:
-        return OrderChangeRequestCreateResult(
+        return ModifyOrderResult(
             success=False,
-            message="Unable to submit order change request right now. Please try again shortly.",
+            message="Unable to submit modification request right now. Please try again shortly.",
         )
 
     if response.status_code == 200 and str(data.get("status", "")).lower() == "success":
-        response_data = data.get("data") if isinstance(data.get("data"), dict) else {}
-        return OrderChangeRequestCreateResult(
+        client_data = data.get("client") if isinstance(data.get("client"), dict) else {}
+        return ModifyOrderResult(
             success=True,
-            message=str(data.get("message") or "your request has been recorded, our team will get back to you shortly"),
-            request_id=_to_int(response_data.get("request_id") or response_data.get("id")),
-            order_id=_to_int(response_data.get("order_id")),
+            message=str(
+                data.get("message")
+                or f"your request has been recorded for order #{order_id}, our team will get back to you shortly"
+            ),
+            order_id=_to_int(data.get("order_id")),
+            client_id=_to_int(client_data.get("id")),
+            client_name=str(client_data.get("cname") or "") or None,
+            client_whatsapp=str(client_data.get("whatsapp") or "") or None,
+            comment=str(data.get("comment") or "") or None,
         )
 
-    return OrderChangeRequestCreateResult(
+    return ModifyOrderResult(
         success=False,
-        message=str(data.get("message") or "Unable to submit order change request."),
+        message=str(data.get("message") or "Unable to submit modification request."),
     )

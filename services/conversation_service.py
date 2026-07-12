@@ -27,7 +27,7 @@ from crm.fabric_alert import raise_fabric_alert
 from crm.bulk_order import create_bulk_order_enquiry
 from crm.delivered_orders import fetch_delivered_orders
 from crm.human_handover import request_human_handover
-from crm.order_change_request import create_order_change_request, list_order_change_requests
+from crm.order_change_request import modify_order
 from crm.order_status import fetch_all_active_orders, fetch_current_order_status
 from crm.schedule_pickup import schedule_fresh_pickup
 from crm.schedule_another_pickup import schedule_another_pickup
@@ -387,9 +387,7 @@ def clear_pickup_flow(session: Any) -> None:
 
 def clear_order_change_flow(session: Any) -> None:
     session.awaiting_order_change_select = False
-    session.awaiting_order_change_type = False
     session.awaiting_order_change_details = False
-    session.pending_order_change_type = None
     session.pending_change_order_id = None
     session.pending_change_order_ids = []
 
@@ -432,46 +430,6 @@ async def build_address_list_message(mobile: str) -> str:
     return "\n".join(lines)
 
 
-ORDER_CHANGE_TYPE_MAP = {
-    "1": "design_change",
-    "2": "size_change",
-    "3": "item_change",
-    "4": "cancel",
-    "5": "other",
-}
-
-
-async def build_order_change_intro_message(mobile: str) -> str:
-    result = await list_order_change_requests(mobile)
-    lines: list[str] = []
-
-    if result.success and result.requests:
-        lines.append("Recent change requests:")
-        for request in result.requests[:3]:
-            request_id = request.request_id if request.request_id is not None else "-"
-            order_id = request.order_id if request.order_id is not None else "-"
-            lines.append(
-                f"- Req {request_id} | Order {order_id} | {request.request_type} | {request.status_label}"
-            )
-        lines.append("")
-    elif result.success:
-        lines.append("No previous change requests found.")
-        lines.append("")
-    else:
-        lines.append(result.message)
-        lines.append("")
-
-    lines.extend(
-        [
-            "Choose request type:",
-            "1. Design change",
-            "2. Size change",
-            "3. Item change",
-            "4. Cancel",
-            "5. Other",
-        ]
-    )
-    return "\n".join(lines)
 
 
 def send_main_menu(
@@ -1340,39 +1298,14 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
 
         existing_session.pending_change_order_id = existing_session.pending_change_order_ids[choice_index]
         existing_session.awaiting_order_change_select = False
-        existing_session.awaiting_order_change_type = True
+        existing_session.awaiting_order_change_details = True
 
-        mobile_for_change = derive_mobile_from_message(message, existing_mobile)
-        intro_message = await build_order_change_intro_message(mobile_for_change) if mobile_for_change else ""
         return [
             OutgoingMessage(
-                text=with_footer(f"Selected Order #{existing_session.pending_change_order_id}.\n\n{intro_message}"),
+                text=with_footer(f"Selected Order #{existing_session.pending_change_order_id}.\n\nPlease describe your requested changes in detail."),
                 reply_markup=build_nav_keyboard(),
             )
         ]
-
-    if existing_session.awaiting_order_change_type:
-        normalized_text = (message.text or "").strip().casefold()
-        selected_type = ORDER_CHANGE_TYPE_MAP.get(normalized_text)
-        if selected_type is None:
-            return [
-                OutgoingMessage(
-                    text=with_footer(
-                        "Please choose a valid request type:\n"
-                        "1. Design change\n"
-                        "2. Size change\n"
-                        "3. Item change\n"
-                        "4. Cancel\n"
-                        "5. Other"
-                    ),
-                    reply_markup=build_nav_keyboard(),
-                )
-            ]
-
-        existing_session.pending_order_change_type = selected_type
-        existing_session.awaiting_order_change_type = False
-        existing_session.awaiting_order_change_details = True
-        return [OutgoingMessage(text=with_footer("Please describe your requested changes in detail."), reply_markup=build_nav_keyboard())]
 
     if existing_session.awaiting_order_change_details:
         details = (message.text or "").strip()
@@ -1380,28 +1313,26 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
             return [OutgoingMessage(text=with_footer("Please enter a valid request description."), reply_markup=build_nav_keyboard())]
 
         mobile_for_change = derive_mobile_from_message(message, existing_mobile)
-        request_type = existing_session.pending_order_change_type or "other"
         order_id = existing_session.pending_change_order_id
         clear_order_change_flow(existing_session)
 
         if not mobile_for_change:
             return [
                 OutgoingMessage(
-                    text=with_footer("I could not identify your mobile number for order change request. Please share contact or send your mobile number."),
+                    text=with_footer("I could not identify your mobile number for order modification. Please share contact or send your mobile number."),
                     reply_markup=build_menu_reply_markup(existing_client_type or "active_client"),
                 )
             ]
 
-        create_result = await create_order_change_request(
+        modify_result = await modify_order(
             mobile=mobile_for_change,
-            request_type=request_type,
-            details=details,
+            comment=details,
             order_id=order_id,
+            chatby="AI Assistant",
         )
-        handover_result = await request_human_handover(mobile_for_change)
         return [
             OutgoingMessage(
-                text=with_footer(f"{create_result.message}\n{handover_result.message}"),
+                text=with_footer(modify_result.message),
                 reply_markup=build_menu_reply_markup(existing_client_type or "active_client"),
             )
         ]
