@@ -70,6 +70,7 @@ async def send_telegram_message(chat_id: int, message: OutgoingMessage) -> None:
     payload: dict[str, Any] = {
         "chat_id": chat_id,
         "text": message.text,
+        "parse_mode": "Markdown",
     }
     if message.reply_markup is not None:
         payload["reply_markup"] = message.reply_markup

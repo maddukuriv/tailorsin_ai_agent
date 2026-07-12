@@ -6,7 +6,7 @@ from typing import Any
 
 from conversation.intent_router import get_intent
 from conversation.menu import FOOTER_TEXT, format_menu_message_with_greeting, get_menu_keyboard
-from conversation.session import get_session, reset_session
+from conversation.session import get_session, reset_session, save_session
 from conversation.state_manager import (
     get_client_profile,
     mark_awaiting_contact,
@@ -43,31 +43,37 @@ logger = logging.getLogger(__name__)
 
 
 TAILORSIN_OVERVIEW = (
-    "How the process works:\n\n"
-    "1. Schedule a pickup.\n"
-    "2. Hand over your fabric along with a sample or reference garment.\n"
-    "3. Within 6 business hours, our team will contact you to confirm design details and share a detailed estimate.\n"
-    "4. Once you approve the estimate and complete the payment, we confirm the delivery timeline and begin production.\n"
-    "5. If you choose not to proceed, your unstitched fabric will be safely returned.\n"
-    "6. After production, an e-invoice will be generated.\n"
-    "7. Your stitched outfits will be delivered to your doorstep.\n"
-    "8. Free alterations are available within 7 days of delivery.\n\n"
-    "Our goal is to make tailoring hassle-free and convenient."
+    "✨ *How tailorsin.com works*\n\n"
+    "1. 📅 Schedule a pickup — we come to you.\n"
+    "2. 🤝 Hand over your fabric along with a sample or reference garment.\n"
+    "3. ⏱ Within 6 business hours, our team contacts you to confirm design details and share a detailed estimate.\n"
+    "4. ✅ Once you approve the estimate and complete payment, we confirm the delivery timeline and begin production.\n"
+    "5. 🔄 If you choose not to proceed, your unstitched fabric will be safely returned.\n"
+    "6. 🧾 After production, an e-invoice will be generated.\n"
+    "7. 🚚 Your stitched outfits will be delivered to your doorstep.\n"
+    "8. 🆓 Free alterations are available within 7 days of delivery.\n\n"
+    "🎯 *Our goal:* to make tailoring hassle-free and convenient."
 )
 
 MEASUREMENT_POLICY = (
+    "📏 *Measurement Process*\n\n"
     "Currently, we do not offer home measurement services due to quality control and customer privacy reasons. "
-    "To ensure a reliable fit, please share a sample or reference outfit during pickup, or book a store visit by appointment."
+    "To ensure a reliable fit, please share a sample or reference outfit during pickup, or book a store visit by appointment.\n\n"
+    "👉 Use option *Book a store visit* to schedule an appointment."
 )
 
 DELIVERY_TIMELINE = (
-    "Most orders are completed within 24 hours of cloth pickup once the design and estimate are approved. "
-    "For complex garments, detailed embroidery, or special finishing, our team confirms the committed delivery date during order approval."
+    "🚚 *Delivery Timelines*\n\n"
+    "Most orders are completed within **24 hours** of cloth pickup once the design and estimate are approved. "
+    "For complex garments, detailed embroidery, or special finishing, our team confirms the committed delivery date during order approval.\n\n"
+    "⏱ We keep you updated at every stage!"
 )
 
 SERVICE_AREAS = (
-    "We currently serve Hyderabad, but we accept orders from other locations as well. "
-    "Share your area or pincode and we will confirm pickup and delivery availability for your location before scheduling."
+    "📍 *Service Areas*\n\n"
+    "We currently serve **Hyderabad**, but we accept orders from other locations as well. "
+    "Share your area or pincode and we will confirm pickup and delivery availability for your location before scheduling.\n\n"
+    "📬 Just send us your pincode to check!"
 )
 
 
@@ -229,8 +235,8 @@ def build_nav_keyboard() -> dict[str, Any]:
     from conversation.menu import FOOTER_MENU_OPTIONS
     return {
         "keyboard": [
-            [{"text": f"9. {FOOTER_MENU_OPTIONS['9']['label']}"}],
-            [{"text": f"0. {FOOTER_MENU_OPTIONS['0']['label']}"}],
+            [{"text": f"9. 💬 {FOOTER_MENU_OPTIONS['9']['label']}"}],
+            [{"text": f"0. 🏠 {FOOTER_MENU_OPTIONS['0']['label']}"}],
         ],
         "resize_keyboard": True,
     }
@@ -513,7 +519,10 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
     # --- Early navigation interceptor: allow escape from any sub-flow ---
     if message.text:
         normalized_text = (message.text or "").strip().casefold()
-        if normalized_text in {"0", "menu", "main menu"}:
+        # Also resolve via get_intent to handle full button tap text like "9. 💬 Chat with a human agent"
+        interceptor_intent = get_intent(existing_client_type or "new_user", message.text)
+
+        if normalized_text in {"0", "menu", "main menu"} or interceptor_intent == "main_menu":
             clear_all_flows(existing_session)
             mobile, client_type, customer_salutation = await resolve_client_type(
                 message.text, message.contact_phone, auto_mobile or existing_mobile,
@@ -521,7 +530,23 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
             await save_client_profile(message.user_id, mobile, client_type, customer_salutation)
             return [await build_main_menu_response(message.user_id, client_type, customer_salutation)]
 
-        if normalized_text in {"9", "handover"}:
+        if normalized_text in {"9", "handover"} or interceptor_intent == "handover":
+            # If the user is not yet registered (new_user), redirect to registration first
+            resolved_client = existing_client_type
+            if not resolved_client:
+                _, resolved_client, _ = await resolve_client_type(
+                    message.text, message.contact_phone, auto_mobile or existing_mobile,
+                )
+
+            if resolved_client == "new_user":
+                existing_session.awaiting_registration_name = True
+                return [
+                    OutgoingMessage(
+                        text=with_footer("Please complete registration first. Enter your full name to continue."),
+                        reply_markup=build_nav_keyboard(),
+                    )
+                ]
+
             clear_all_flows(existing_session)
             mobile_for_handover = derive_mobile_from_message(message, existing_mobile)
             if not mobile_for_handover:
@@ -1478,7 +1503,7 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
                 await build_main_menu_response(message.user_id, client_type, customer_salutation),
             ]
 
-        if client_type == "new_user" and selected_intent in {"visit", "handover"}:
+        if client_type == "new_user" and selected_intent in {"visit", "book_visit", "handover"}:
             mobile_for_registration = derive_mobile_from_message(message, mobile)
             if mobile_for_registration:
                 await save_client_profile(message.user_id, mobile_for_registration, client_type, customer_salutation)
