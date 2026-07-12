@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from services.http_client import http_get
 
 
-BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/deliveredorders.php"
+BASE_URL = "https://crm.tailorsin.com/tailorsin-api/api/alterationeligibleorders.php"
 DEFAULT_WINDOW_DAYS = 30
 
 
