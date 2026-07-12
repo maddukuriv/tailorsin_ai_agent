@@ -32,9 +32,6 @@ class SessionState:
     awaiting_address_add_line: bool = False
     awaiting_address_add_city: bool = False
     awaiting_address_add_pincode: bool = False
-    awaiting_address_update_id: bool = False
-    awaiting_address_update_line: bool = False
-    awaiting_address_set_main: bool = False
     awaiting_address_delete_id: bool = False
     awaiting_pickup_address: bool = False
     pending_pickup_address_id: int | None = None
@@ -53,7 +50,6 @@ class SessionState:
     pending_cancel_order_ids: list[int] = field(default_factory=list)
     pending_address_line: str | None = None
     pending_address_city: str | None = None
-    pending_address_id: int | None = None
     address_needed_for_pickup: bool = False
     last_activity_at: float = field(default_factory=time.time)
 

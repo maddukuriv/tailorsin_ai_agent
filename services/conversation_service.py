@@ -18,7 +18,6 @@ from crm.client_address import (
     add_client_address,
     delete_client_address,
     fetch_client_addresses,
-    update_client_address,
 )
 from crm.client_type import lookup_customer_profile
 from crm.cancel_order import cancel_current_order
@@ -366,13 +365,9 @@ def clear_address_update_flow(session: Any) -> None:
     session.awaiting_address_add_line = False
     session.awaiting_address_add_city = False
     session.awaiting_address_add_pincode = False
-    session.awaiting_address_update_id = False
-    session.awaiting_address_update_line = False
-    session.awaiting_address_set_main = False
     session.awaiting_address_delete_id = False
     session.pending_address_line = None
     session.pending_address_city = None
-    session.pending_address_id = None
     session.pending_address_list_ids = []
 
 
@@ -429,8 +424,7 @@ async def build_address_list_message(mobile: str) -> str:
         [
             "",
             "Reply 1 to add a new address.",
-            "Reply 2 to update an address or set one as main.",
-            "Reply 3 to delete an address.",
+            "Reply 2 to delete an address.",
         ]
     )
     return "\n".join(lines)
@@ -1040,19 +1034,14 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
             existing_session.awaiting_address_add_line = True
             return [OutgoingMessage(text=with_footer("Please enter address line (house/area/street)."), reply_markup=build_nav_keyboard())]
 
-        if normalized_text in {"2", "update", "update address", "set main"}:
-            existing_session.awaiting_address_action = False
-            existing_session.awaiting_address_update_id = True
-            return [OutgoingMessage(text=with_footer("Please enter the Address ID you want to update/set as main."), reply_markup=build_nav_keyboard())]
-
-        if normalized_text in {"3", "delete", "delete address", "remove", "remove address"}:
+        if normalized_text in {"2", "delete", "delete address", "remove", "remove address"}:
             existing_session.awaiting_address_action = False
             existing_session.awaiting_address_delete_id = True
             return [OutgoingMessage(text=with_footer("Please reply with the number of the address you'd like to delete from the list above."), reply_markup=build_nav_keyboard())]
 
         return [
             OutgoingMessage(
-                text=with_footer("Please reply 1 to add new address, 2 to update/set main, or 3 to delete an address."),
+                text=with_footer("Please reply 1 to add new address or 2 to delete an address."),
                 reply_markup=build_nav_keyboard(),
             )
         ]
@@ -1237,69 +1226,6 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
         return [
             OutgoingMessage(
                 text=with_footer(add_result.message),
-                reply_markup=build_menu_reply_markup(existing_client_type or "client"),
-            )
-        ]
-
-    if existing_session.awaiting_address_update_id:
-        address_id_text = normalize_mobile(message.text or "")
-        if not address_id_text:
-            return [OutgoingMessage(text=with_footer("Please enter a valid numeric Address ID."), reply_markup=build_nav_keyboard())]
-
-        existing_session.pending_address_id = int(address_id_text)
-        existing_session.awaiting_address_update_id = False
-        existing_session.awaiting_address_update_line = True
-        return [
-            OutgoingMessage(
-                text=with_footer("Enter new address line to update, or reply 'skip' to keep existing line."),
-                reply_markup=build_nav_keyboard(),
-            )
-        ]
-
-    if existing_session.awaiting_address_update_line:
-        update_line = (message.text or "").strip()
-        if update_line.casefold() in {"skip", "no", "none"}:
-            existing_session.pending_address_line = None
-        else:
-            if len(update_line) < 5:
-                return [OutgoingMessage(text=with_footer("Please enter a valid address line or reply 'skip'."), reply_markup=build_nav_keyboard())]
-            existing_session.pending_address_line = update_line
-
-        existing_session.awaiting_address_update_line = False
-        existing_session.awaiting_address_set_main = True
-        return [OutgoingMessage(text=with_footer("Set this address as main? Reply yes or no."), reply_markup=build_nav_keyboard())]
-
-    if existing_session.awaiting_address_set_main:
-        normalized_text = (message.text or "").strip().casefold()
-        if normalized_text in {"yes", "y", "1", "set main", "main"}:
-            set_main = True
-        elif normalized_text in {"no", "n", "0", "skip"}:
-            set_main = None
-        else:
-            return [OutgoingMessage(text=with_footer("Please reply yes or no."), reply_markup=build_nav_keyboard())]
-
-        mobile_for_address = derive_mobile_from_message(message, existing_mobile)
-        address_id = existing_session.pending_address_id
-        address_line = existing_session.pending_address_line
-        clear_address_update_flow(existing_session)
-
-        if not mobile_for_address or address_id is None:
-            return [
-                OutgoingMessage(
-                    text=with_footer("Unable to update address due to missing details. Please choose option 8 again."),
-                    reply_markup=build_menu_reply_markup(existing_client_type or "client"),
-                )
-            ]
-
-        update_result = await update_client_address(
-            mobile_for_address,
-            address_id=address_id,
-            address1=address_line,
-            set_main=set_main,
-        )
-        return [
-            OutgoingMessage(
-                text=with_footer(update_result.message),
                 reply_markup=build_menu_reply_markup(existing_client_type or "client"),
             )
         ]
