@@ -52,7 +52,11 @@ class SessionState:
     pending_cancel_order_ids: list[int] = field(default_factory=list)
     pending_address_line: str | None = None
     pending_address_city: str | None = None
+    pending_address_pincode: str | None = None
     address_needed_for_pickup: bool = False
+    awaiting_address_location: bool = False
+    pending_address_lat: float | None = None
+    pending_address_lng: float | None = None
     last_activity_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:

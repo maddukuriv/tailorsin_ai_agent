@@ -13,6 +13,8 @@ class AddressRecord:
     city: str
     pincode: str
     is_main: bool
+    latitude: float | None = None
+    longitude: float | None = None
 
 
 @dataclass
@@ -45,6 +47,14 @@ def _to_int(value: object) -> int | None:
 
 def _to_bool(value: object) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "main"}
+
+
+def _to_float(value: object) -> float | None:
+    try:
+        v = float(str(value))
+        return v
+    except (TypeError, ValueError):
+        return None
 
 
 async def fetch_client_addresses(mobile: str) -> AddressListResult:
@@ -85,6 +95,8 @@ async def fetch_client_addresses(mobile: str) -> AddressListResult:
         city = _clean(item.get("city"))
         pincode = _clean(item.get("pincode"))
         is_main = _to_bool(item.get("is_main") or item.get("main") or item.get("set_main"))
+        latitude = _to_float(item.get("lat") or item.get("latitude"))
+        longitude = _to_float(item.get("lng") or item.get("longitude") or item.get("lon"))
 
         addresses.append(
             AddressRecord(
@@ -93,6 +105,8 @@ async def fetch_client_addresses(mobile: str) -> AddressListResult:
                 city=city,
                 pincode=pincode,
                 is_main=is_main,
+                latitude=latitude,
+                longitude=longitude,
             )
         )
 
@@ -104,14 +118,26 @@ async def fetch_client_addresses(mobile: str) -> AddressListResult:
     )
 
 
-async def add_client_address(mobile: str, address1: str, city: str, pincode: str) -> AddressUpsertResult:
-    payload = {
+async def add_client_address(
+    mobile: str,
+    address1: str,
+    city: str,
+    pincode: str,
+    lat: float | None = None,
+    lng: float | None = None,
+) -> AddressUpsertResult:
+    payload: dict[str, object] = {
         "mobile": mobile,
         "action": "add",
         "address1": address1.strip(),
         "city": city.strip(),
         "pincode": pincode.strip(),
     }
+
+    if lat is not None:
+        payload["lat"] = lat
+    if lng is not None:
+        payload["lng"] = lng
 
     try:
         response = await http_post(BASE_URL, json_body=payload)

@@ -5,6 +5,7 @@ import time
 from typing import Any
 
 from conversation.intent_router import get_intent
+from services.geocoder import geocode_address
 from conversation.menu import FOOTER_TEXT, format_menu_message_with_greeting, get_menu_keyboard
 from conversation.session import get_session, reset_session, save_session
 from conversation.state_manager import (
@@ -15,6 +16,7 @@ from conversation.state_manager import (
 from crm.alteration_pickup import schedule_alteration_pickup
 from crm.book_appointment import book_store_visit, fetch_available_visit_slots
 from crm.client_address import (
+    AddressUpsertResult,
     add_client_address,
     delete_client_address,
     fetch_client_addresses,
@@ -84,6 +86,8 @@ class IncomingMessage:
     contact_user_id: int | None = None
     source_user_id: int | None = None
     is_start_command: bool = False
+    location_lat: float | None = None
+    location_lng: float | None = None
     metadata: dict[str, Any] | None = None
 
 
@@ -370,7 +374,11 @@ def clear_address_update_flow(session: Any) -> None:
     session.awaiting_address_delete_id = False
     session.pending_address_line = None
     session.pending_address_city = None
+    session.pending_address_pincode = None
     session.pending_address_list_ids = []
+    session.awaiting_address_location = False
+    session.pending_address_lat = None
+    session.pending_address_lng = None
 
 
 def clear_pickup_flow(session: Any) -> None:
@@ -1137,9 +1145,9 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
         mobile_for_address = derive_mobile_from_message(message, existing_mobile)
         address_line = existing_session.pending_address_line
         city = existing_session.pending_address_city
-        clear_address_update_flow(existing_session)
 
         if not mobile_for_address or not address_line or not city:
+            clear_address_update_flow(existing_session)
             return [
                 OutgoingMessage(
                     text=with_footer("Unable to add address due to missing details. Please choose option 8 again."),
@@ -1147,7 +1155,107 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
                 )
             ]
 
-        add_result = await add_client_address(mobile_for_address, address_line, city, pincode)
+        # Store pincode and ask for location before saving
+        existing_session.pending_address_line = address_line
+        existing_session.pending_address_city = city
+        existing_session.pending_address_pincode = pincode
+        existing_session.awaiting_address_add_pincode = False
+        existing_session.awaiting_address_location = True
+
+        return [
+            OutgoingMessage(
+                text=with_footer(
+                    "📍 Would you like to share your current location for accurate pickup?\n\n"
+                    "1. Share location (tap the location button if available)\n"
+                    "2. Skip — I'll auto-detect from your address"
+                ),
+                reply_markup={
+                    "keyboard": [
+                        [{"text": "📍 Share Location", "request_location": True}],
+                        [{"text": "2. Skip"}],
+                    ],
+                    "resize_keyboard": True,
+                    "one_time_keyboard": True,
+                },
+            )
+        ]
+
+    if existing_session.awaiting_address_location:
+        # Handle location shared via Telegram's native location picker
+        if message.location_lat is not None and message.location_lng is not None:
+            existing_session.pending_address_lat = message.location_lat
+            existing_session.pending_address_lng = message.location_lng
+            lat_lng = (message.location_lat, message.location_lng)
+            mobile_for_address = derive_mobile_from_message(message, existing_mobile)
+            address_line = existing_session.pending_address_line
+            city = existing_session.pending_address_city
+            pincode = existing_session.pending_address_pincode or ""
+            clear_address_update_flow(existing_session)
+
+            if not mobile_for_address or not address_line or not city:
+                return [
+                    OutgoingMessage(
+                        text=with_footer("Unable to add address due to missing details. Please choose option 8 again."),
+                        reply_markup=build_menu_reply_markup(existing_client_type or "client"),
+                    )
+                ]
+
+            add_result = await add_client_address(
+                mobile_for_address, address_line, city, pincode,
+                lat=lat_lng[0], lng=lat_lng[1],
+            )
+        else:
+            normalized_text = (message.text or "").strip().casefold()
+            if normalized_text in {"2", "skip", "skip location", "no"}:
+                # User skipped location — try auto-geocoding
+                mobile_for_address = derive_mobile_from_message(message, existing_mobile)
+                address_line = existing_session.pending_address_line
+                city = existing_session.pending_address_city
+                pincode = existing_session.pending_address_pincode or ""
+                lat_lng = None
+
+                if mobile_for_address and address_line and city and pincode:
+                    lat_lng = await geocode_address(address_line, city, pincode)
+
+                clear_address_update_flow(existing_session)
+
+                if not mobile_for_address or not address_line or not city:
+                    return [
+                        OutgoingMessage(
+                            text=with_footer("Unable to add address due to missing details. Please choose option 8 again."),
+                            reply_markup=build_menu_reply_markup(existing_client_type or "client"),
+                        )
+                    ]
+
+                add_result = await add_client_address(
+                    mobile_for_address, address_line, city, pincode,
+                    lat=lat_lng[0] if lat_lng else None,
+                    lng=lat_lng[1] if lat_lng else None,
+                )
+
+                if lat_lng:
+                    add_result_message_ext = f"\n📍 Location detected automatically."
+                else:
+                    add_result_message_ext = ""
+                add_result = AddressUpsertResult(
+                    success=add_result.success,
+                    message=add_result.message + add_result_message_ext,
+                    address_id=add_result.address_id,
+                )
+            else:
+                return [
+                    OutgoingMessage(
+                        text=with_footer("Please reply 2 to skip location sharing, or use the location button to share your current location."),
+                        reply_markup={
+                            "keyboard": [
+                                [{"text": "📍 Share Location", "request_location": True}],
+                                [{"text": "2. Skip"}],
+                            ],
+                            "resize_keyboard": True,
+                            "one_time_keyboard": True,
+                        },
+                    )
+                ]
 
         # If this address was added as part of the pickup flow, continue the pickup
         if add_result.success and existing_session.pickup_mode is not None:

@@ -44,6 +44,12 @@ def parse_telegram_update(update: dict[str, Any]) -> IncomingMessage | None:
 
     text = (message.get("text") or "").strip()
     contact = message.get("contact") or {}
+    location = message.get("location") or {}
+
+    lat = location.get("latitude")
+    lng = location.get("longitude")
+    location_lat = float(lat) if lat is not None else None
+    location_lng = float(lng) if lng is not None else None
 
     return IncomingMessage(
         user_id=chat_id,
@@ -52,6 +58,8 @@ def parse_telegram_update(update: dict[str, Any]) -> IncomingMessage | None:
         contact_user_id=contact.get("user_id"),
         source_user_id=message.get("from", {}).get("id"),
         is_start_command=text == "/start",
+        location_lat=location_lat,
+        location_lng=location_lng,
         metadata={"platform": "telegram", "raw_update": update},
     )
 
