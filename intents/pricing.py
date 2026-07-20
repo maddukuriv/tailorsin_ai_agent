@@ -1,5 +1,6 @@
-BASE_CATALOGUE_URL = "https://crm.tailorsin.com/tailorsin-api/api/itemswithprice.php"
+# BASE_CATALOGUE_URL = "https://crm.tailorsin.com/tailorsin-api/api/itemswithprice.php"
 
+BASE_CATALOGUE_URL = "https://drive.google.com/file/d/1s67qOzn2n22lN670ir0Le462FcgGyCGL/view?usp=sharing"
 
 def _resolve_catalog_category(client_type: str) -> int:
     normalized = (client_type or "").strip().lower()
