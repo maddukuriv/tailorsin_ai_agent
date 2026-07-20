@@ -352,6 +352,8 @@ def clear_all_flows(session: Any) -> None:
     clear_order_cancel_flow(session)
     session.awaiting_contact = False
     session.awaiting_registration_name = False
+    session.awaiting_registration_email = False
+    session.pending_registration_name = None
     session.awaiting_visit_date = False
     session.awaiting_visit_time = False
     session.awaiting_fabric_delivery_notes = False
@@ -570,13 +572,40 @@ async def handle_incoming_message(message: IncomingMessage) -> list[OutgoingMess
                 )
             ]
 
-        registration_result = await register_new_client(mobile_for_registration, registration_name)
+        # Store name and proceed to ask for email
+        existing_session.pending_registration_name = registration_name
         existing_session.awaiting_registration_name = False
+        existing_session.awaiting_registration_email = True
+
+        return [OutgoingMessage(text=with_footer("Please enter your email address for registration (optional).\nReply with 'skip' to skip email."), reply_markup=build_nav_keyboard())]
+
+    if existing_session.awaiting_registration_email:
+        registration_name = existing_session.pending_registration_name
+        mobile_for_registration = derive_mobile_from_message(message, existing_mobile)
+
+        if not mobile_for_registration or not registration_name:
+            existing_session.awaiting_registration_email = False
+            existing_session.pending_registration_name = None
+            return [
+                OutgoingMessage(
+                    text="Registration details were lost. Please start the registration process again from the menu.",
+                )
+            ]
+
+        registration_email = (message.text or "").strip()
+        if registration_email.casefold() in {"skip", "no", "none", ""}:
+            registration_email = None
+
+        existing_session.awaiting_registration_email = False
+        existing_session.pending_registration_name = None
+
+        registration_result = await register_new_client(mobile_for_registration, registration_name, email=registration_email)
 
         logger.info(
-            "registration_attempt user_id=%s mobile_present=%s success=%s",
+            "registration_attempt user_id=%s mobile_present=%s has_email=%s success=%s",
             message.user_id,
             bool(mobile_for_registration),
+            bool(registration_email),
             registration_result.success,
         )
 

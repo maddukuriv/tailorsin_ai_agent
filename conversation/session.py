@@ -17,6 +17,8 @@ class SessionState:
     awaiting_contact: bool = False
     has_seen_known_customer_menu: bool = False
     awaiting_registration_name: bool = False
+    awaiting_registration_email: bool = False
+    pending_registration_name: str | None = None
     awaiting_pickup_date: bool = False
     awaiting_pickup_time: bool = False
     awaiting_alteration_pickup_notes: bool = False
